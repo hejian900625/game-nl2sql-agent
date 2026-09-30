@@ -111,6 +111,15 @@ org.xerial:sqlite-jdbc                                    ← 必须够新，窗
 > **SQLite 没有只读账号**（MySQL/PG 的 `GRANT SELECT` 在这里不存在）。这是 §3 选 SQLite 换来的代价，第 1、2 两步因此不是锦上添花而是主力。
 > **人确认是责任归属机制，不是安全机制** —— 安全必须来自不依赖人注意力的 1–4 步。这个区分本身就是学习目标②的内容，README 要写。
 
+**实测（2026-09-30，JSqlParser 5.4 + sqlite-jdbc 3.53.4.0，`SqlGuardTest` 29 条用例全绿）**
+
+- ⚠️ **最重要的一条：`parse("select 1; delete from acct")` 不报错，只吐出第一条 `PlainSelect`**，第二条静静留在原文里。所以"检测分号"是错的机制，正确机制是**执行文本一律取 AST 重新序列化的 `statement.toString()`**（实测输出 `SELECT 1 LIMIT 200`，delete 消失）。`GuardOutcome.sql()` 的 javadoc 已经把这条钉住 —— 下游 `run_sql` 若图省事用模型原文，护栏等于没有。
+- 注释前缀 `-- x\nselect ...`、`WITH` CTE、子查询里的表、`main.` 库名前缀，四种绕过全部按预期处理：CTE 别名**不出现**在 `getTables()` 里（因此白名单不用为 WITH 开例外），子查询里的未授权表**会出现**，`main.acct` 归一化后放行、`main.sqlite_master` 仍拦。
+- 双引号标识符 `from "users"` 会被识别成表（拦）；**方括号 `from [acct]` 默认方言解析失败**（拒）—— 后者是 fail-closed，不是漏放，但要知道 SQLite 合法而本护栏不放过。
+- `PRAGMA` / `ATTACH` / `VACUUM` 全在第一掉：解析器不认 SQLite 方言。**含义是"解析失败即拒绝"这条规则承担了对 SQLite 特有攻击面的覆盖**，而不是第 1 步之外的某一步。
+- LIMIT：`Select` 基类持有 limit，union/CTE 上注入位置正确（挂整条语句末尾）；模型自带的小 LIMIT 保留，`limit 1000000` 压回上限。
+- B05/B06/B10 三道真实评测题的 `truthSql`（相关子查询 + `date(...,'+1 day')` + 两段 JOIN 赛季边界 + `order by sum() desc limit 1`）和 `lag() over` 都能过护栏，不会出现"题没错、被护栏拦死"的假归因。
+
 ## 7. 评测集
 
 - **25 题：你写 15 道（真实会问的），我生成 10 道对抗题**（歧义命名、两跳 JOIN、口径含糊）。全由你写会因"你知道答案所以问得清楚"而测不出歧义处理；全由我生成会落在模型舒适区。
@@ -183,7 +192,9 @@ src/main/resources/
 **W1**：Boot 4.0.4 骨架 → SQLite schema/seed 生成 → `run_sql` + 护栏四步（含离线单测）→ **挂起式确认门跑通 + 一条集成测试**（approve / edit / deny 三条都验）。
 > **进度（2026-09-30）**：✅ **W1-a/W1-b 完成**。`ModelConfig` 用 `ModelRegistry.resolve("deepseek:" + game.model.name, ctx)` 自建 `Model` bean，`agentscope.openai.enabled: false` 已把 starter 那条自动装配关掉。
 > 实测确认了三件之前只是推断的事：① 换路之后 `Model` 的实现类**仍是** `OpenAIChatModel` —— SPI 只是套壳，白赚的是 `DeepSeekFormatter` + `thinking` 参数 + `nativeStructuredOutput=false`，不是另一个客户端实现，别在 README 里写错；② base starter 的 `agentscopeReActAgent` 正常吃到了我们自建 bean（`@ConditionalOnBean(Model)` 成立），四 bean 断言仍绿；③ `contextWindow=0` 已进启动日志，观察是否有静默裁剪。
-> fail-fast 三条单测（缺 key / 缺 model 名 / 名字还是 `gpt-4.1-mini`）均拒绝启动；带 key 的 smoke 测试重跑仍真调通。**W1 剩余**：`run_sql` + 护栏四步、挂起式确认门。
+> fail-fast 三条单测（缺 key / 缺 model 名 / 名字还是 `gpt-4.1-mini`）均拒绝启动；带 key 的 smoke 测试重跑仍真调通。
+> ✅ **W1-c 前半：护栏第 1–3 步落地**（`guard/SqlGuard`+`Rejection`+`GuardOutcome`，29 条离线用例，CI 可跑）。实测推翻了 §6 原本预设的"检测多语句"路线，见 §6 末的实测清单 —— **一句话：执行文本必须取 AST 重新序列化的结果，绝不能用模型原文。**
+> **W1 剩余**：`db/`（game.db 由 schema+seed 生成、`--reset-db`、只读连接 + 查询超时 = 护栏第 4 步）、`run_sql` 工具、挂起式确认门。
 **W2**：`--eval` + 25 题 → 第一个真实准确率 → AG-UI 页面抄改 → 追问 5 题的状态传递 → **半天 throwaway 实验**：单独测框架原生 permission+resume，确认 #3096 到底在哪一层复现，**结论作为 issue 提给上游**。
 **W3**：README（中英）+ GIF + 准确率表 → 模型 ID 那条 issue → 收尾。
 **每周留一天不发功能**（W1 因 Boot 4 额外吃半天，这条从可选变成必须）。

@@ -20,6 +20,9 @@
   <properties>
     <java.version>21</java.version>
     <agentscope.version>2.0.3</agentscope.version>
+    <!-- 护栏必须走真正的 SQL 解析器；sqlite-jdbc 内嵌的 SQLite 要 ≥3.25 才有窗口函数（§3/§5） -->
+    <jsqlparser.version>5.4</jsqlparser.version>
+    <sqlite-jdbc.version>3.53.4.0</sqlite-jdbc.version>
   </properties>
 
   <dependencies>
@@ -37,6 +40,17 @@
       <groupId>io.agentscope</groupId>
       <artifactId>agentscope-openai-spring-boot-starter</artifactId>
       <version>${agentscope.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>com.github.jsqlparser</groupId>
+      <artifactId>jsqlparser</artifactId>
+      <version>${jsqlparser.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.xerial</groupId>
+      <artifactId>sqlite-jdbc</artifactId>
+      <version>${sqlite-jdbc.version}</version>
     </dependency>
 
     <dependency>
