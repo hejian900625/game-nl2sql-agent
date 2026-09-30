@@ -90,6 +90,15 @@ org.xerial:sqlite-jdbc                                    ← 必须够新，窗
 
 **provider 切换的纪律**：代码里不出现 `tool_choice:"required"`。**理由已更正**（Day-0 实测）：DeepSeek 在**思考档开着**时拒绝它（400 `Thinking mode does not support this tool_choice`），但 `thinking:{type:"disabled"}` + `required` 是**能用的**（200）。不用它的真实理由与 provider 无关 —— `required` 会连"给出最终答复"那一轮也强制调工具，Agent 收不了尾。换模型只改注册串 + 环境变量，不许散落硬编码。
 
+**D 的落地实测（2026-09-30，`tool/RunSqlToolTest` 9 条 + `AgentBeanRegistrationTest` 2 条，全绿、不联网）**
+
+- ⚠️ **`Toolkit.callTool` 校验的是 `ToolUseBlock.content`，不是 `input`**：`ToolExecutor` 把 `toolUseBlock.getContent()`（模型侧的原始 arguments JSON）交给 `ToolValidator`（networknt JSON Schema）跑，工具只要有参数 schema 就**必须**填 content；只填 input 得到 `Parameter validation failed for tool 'run_sql': Schema validation error: argument "content" is null`。测试里手写 `ToolUseBlock` 时这是最容易漏的一个字段，`input` 只是框架解析后给你的 map。
+- ⚠️ **返回值默认被 JSON 序列化一遍**：`DefaultToolResultConverter.serialize()` 无条件 `JsonUtils.getJsonCodec().toJson(result)`，所以 `Mono<String>` 到了模型/前端眼里是 `""护栏拒绝：...\n..."`（多一层引号、换行成字面量）。`@Tool(converter = PlainTextResultConverter.class)` 换掉即可（转换器由 `getDeclaredConstructor().newInstance()` 实例化 → **必须是 public 无参构造**）。这不是美化：这段文本要进 §7 的失败归因、也要人读。
+- **给人看的 SQL 是护栏改写后的那条**，不是模型原文 —— 实测 `login_dt='2026-01-31'` 到了确认面板变成 `login_dt = '2026-01-31' ... LIMIT 200`（解析器重排空格 + 补 LIMIT）。README 要写明"展示的 SQL 可能与模型生成的不完全一致"，否则第一次点确认的人会以为人在审模型的原话。
+- **人的编辑再进一次护栏**（`Decision.edit("drop table acct")` → 拒，且不执行）。这条是 §6"人是责任归属、不是安全机制"的直接推论，不是框架要求。
+- **超时=拒绝**，`doFinally` 清理挂起条目，事后 `decide()` 返回 false（前端拿到 410）；同一条决策点两次，第二次也 false。
+- **`game.confirm.mode=auto_approve` 是 §7 评测的接缝**：25 道题不可能每题手点一次，`--eval` 必须能整条链路跑完而无人值守；`ConfirmationGate` 在该模式下不入 pending 表，`AgentBeanRegistrationTest` 用默认 `human` 模式验挂起，`RunSqlToolTest` 两种模式都验。
+
 ## 5. 数据层
 
 - **自造游戏域 6–8 张表**，不用 Sakila/Chinook/Northwind：公开样例库的 schema 太出名，模型是在背答案而不是读 DDL，评测分会虚高。
@@ -114,7 +123,7 @@ org.xerial:sqlite-jdbc                                    ← 必须够新，窗
 
 1. **JSqlParser 解析** → 判定：是否单条语句、是否为 SELECT、有无 DDL/DML、有无 `PRAGMA`/`ATTACH`/系统表。**禁止 `startsWith("SELECT")` 之类正则**（注释前缀、`WITH` CTE、`;DELETE` 多语句都能绕过）。　✅ `guard/SqlGuard`
 2. **表白名单** → 只允许 §5 那 6–8 张表。清单在 `SqlGuard.ALLOWED_TABLES`，对照源是 `GameDatabase.TABLES`。　✅
-3. **注入 LIMIT** → 未写 LIMIT 的强制加；模型自带更大的 LIMIT 会被压回上限。上限目前是 `SqlGuard` 的构造参数，下一步接 `game.guard.max-rows`。　✅
+3. **注入 LIMIT** → 未写 LIMIT 的强制加；模型自带更大的 LIMIT 会被压回上限。上限走 `game.guard.max-rows`（`guard/GuardProperties`+`GuardConfig`，`SqlGuard` 本身不带注解、保持可离线测）。　✅
 4. **只读连接执行** → SQLite 以只读模式打开 + 查询超时。　✅ `db/GameDatabase.query`（`open_mode=1` + `setQueryTimeout`）
 
 失败返回**结构化拒绝理由**，这个理由直接进评测归因（§7）和前端的"为什么被拦"提示。
@@ -200,12 +209,12 @@ src/main/resources/
 
 > **为什么 Day-0 有这道门禁**：本项目的一个前提（"我手上有能调通的配置"）在本轮访谈中被证伪过一次 —— `api.agnes.ai` 域名不解析、`qwen3-coder-plus` 不在该服务商模型列表里，也就是那份配置从未成功过。所以"配置未验证就开工"是已知会复发的失败模式。
 
-**W1**：Boot 4.0.4 骨架 → SQLite schema/seed 生成 → `run_sql` + 护栏四步（含离线单测）→ **挂起式确认门跑通 + 一条集成测试**（approve / edit / deny 三条都验）。
+**W1**：Boot 4.0.4 骨架 → SQLite schema/seed 生成 → `run_sql` + 护栏四步（含离线单测）→ **挂起式确认门跑通 + 一条集成测试**（approve / edit / deny 三条都验）。　✅ **2026-09-30 门禁达成**：56 条用例全绿（1 条 skip = 无 key 的 smoke）。approve/edit/deny/超时四条处置由 `RunSqlToolTest`（真 `Toolkit`、真 SQLite、不联网）逐条验，approve 另在 Spring 上下文里端到端跑一遍（`AgentBeanRegistrationTest`，含 `Toolkit.getToolNames()==[run_sql]` 断言）。细节见 §4 末实测清单。
 > **进度（2026-09-30）**：✅ **W1-a/W1-b 完成**。`ModelConfig` 用 `ModelRegistry.resolve("deepseek:" + game.model.name, ctx)` 自建 `Model` bean，`agentscope.openai.enabled: false` 已把 starter 那条自动装配关掉。
 > 实测确认了三件之前只是推断的事：① 换路之后 `Model` 的实现类**仍是** `OpenAIChatModel` —— SPI 只是套壳，白赚的是 `DeepSeekFormatter` + `thinking` 参数 + `nativeStructuredOutput=false`，不是另一个客户端实现，别在 README 里写错；② base starter 的 `agentscopeReActAgent` 正常吃到了我们自建 bean（`@ConditionalOnBean(Model)` 成立），四 bean 断言仍绿；③ `contextWindow=0` 已进启动日志，观察是否有静默裁剪。
 > fail-fast 三条单测（缺 key / 缺 model 名 / 名字还是 `gpt-4.1-mini`）均拒绝启动；带 key 的 smoke 测试重跑仍真调通。
 > ✅ **W1-c 前半：护栏第 1–3 步落地**（`guard/SqlGuard`+`Rejection`+`GuardOutcome`，29 条离线用例，CI 可跑）。实测推翻了 §6 原本预设的"检测多语句"路线，见 §6 末的实测清单 —— **一句话：执行文本必须取 AST 重新序列化的结果，绝不能用模型原文。**
-> **W1 剩余**：`run_sql` 工具本身、挂起式确认门。
+> **W1 剩余**：无 —— 四段全部完成（骨架 / W1-a 模型 / W1-b fail-fast / W1-c 护栏+db+工具+确认门）。下一步是 §10 W2 的 `--eval` 与 prompt 的 schema 注入。
 > ✅ **W1-c 后半：`db/` 落地**（`GameDatabase` + `SqlScript` + `DbProperties`，12 条离线用例）。整库 1MB seed 走 JDBC 会 `SQLITE_TOOBIG`，因此有了切分器；建库后强制验 8 张表，因为 SQLite 对错误路径会静默建空库。**最有价值的一条**：`GameDatabaseTest` 把 25 道题的 `truthSql` 全跑了一遍并逐条对上 `expect.value` —— 从此 §2 的"clone 下来 10 分钟能跑通"不依赖 sqlite3 CLI 也不依赖 Python，CI 就能证。细节见 §5 末实测清单。
 **W2**：`--eval` + 25 题 → 第一个真实准确率 → AG-UI 页面抄改 → 追问 5 题的状态传递 → **半天 throwaway 实验**：单独测框架原生 permission+resume，确认 #3096 到底在哪一层复现，**结论作为 issue 提给上游**。
 **W3**：README（中英）+ GIF + 准确率表 → 模型 ID 那条 issue → 收尾。

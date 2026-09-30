@@ -20,6 +20,12 @@ game:
     path: data/game.db
     reset: false
     query-timeout-seconds: 10
+  guard:
+    max-rows: 200
+  confirm:
+    timeout-seconds: 300
+    # auto_approve 只给 --eval 用：25 道题不可能每题手点一次
+    mode: human
   model:
     name: deepseek-flash
     api-key: ${DEEPSEEK_API_KEY:}

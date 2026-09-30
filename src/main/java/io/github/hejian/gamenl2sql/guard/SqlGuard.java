@@ -23,8 +23,8 @@ import java.util.TreeSet;
  */
 public final class SqlGuard {
 
-    /** 授权清单 = schema.sql 里那 8 张表，字段的权威定义见 PLAN §12。 */
-    static final Set<String> ALLOWED_TABLES = Set.of(
+    /** 授权清单 = schema.sql 里那 8 张表，字段的权威定义见 PLAN §12。拒绝文案也要用它，故 public。 */
+    public static final Set<String> ALLOWED_TABLES = Set.of(
             "srv", "acct", "role", "goods", "pay_ord", "login_log", "item_flow", "season");
 
     private static final Set<String> SYSTEM_PREFIXES = Set.of("sqlite_", "pragma_");
