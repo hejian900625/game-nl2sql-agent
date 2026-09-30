@@ -14,21 +14,21 @@ class ModelConfigFailFastTest {
 
     @Test
     void rejectsMissingApiKey() {
-        assertThatThrownBy(() -> config.model(new ModelProperties("deepseek-flash", "", true, false)))
+        assertThatThrownBy(() -> config.model(new DeepSeekModelProperties("deepseek-flash", "", true, false)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("DEEPSEEK_API_KEY");
     }
 
     @Test
     void rejectsMissingModelName() {
-        assertThatThrownBy(() -> config.model(new ModelProperties(" ", "placeholder", true, false)))
+        assertThatThrownBy(() -> config.model(new DeepSeekModelProperties(" ", "placeholder", true, false)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("game.model.name");
     }
 
     @Test
     void rejectsStarterDefaultModelName() {
-        assertThatThrownBy(() -> config.model(new ModelProperties("gpt-4.1-mini", "placeholder", true, false)))
+        assertThatThrownBy(() -> config.model(new DeepSeekModelProperties("gpt-4.1-mini", "placeholder", true, false)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("gpt-4.1-mini");
     }

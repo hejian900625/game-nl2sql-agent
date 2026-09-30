@@ -15,7 +15,7 @@ import org.springframework.context.annotation.Configuration;
  * 置 nativeStructuredOutput(false)、并按 enableThinking 发 thinking 参数。
  */
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(ModelProperties.class)
+@EnableConfigurationProperties(DeepSeekModelProperties.class)
 public class ModelConfig {
 
     private static final Logger log = LoggerFactory.getLogger(ModelConfig.class);
@@ -23,7 +23,7 @@ public class ModelConfig {
     private static final String STARTER_DEFAULT = "gpt-4.1-mini";
 
     @Bean
-    Model model(ModelProperties props) {
+    Model model(DeepSeekModelProperties props) {
         if (props.name() == null || props.name().isBlank()) {
             throw new IllegalStateException(
                     "game.model.name 未配置。填 DeepSeek 的模型 id（不带 deepseek: 前缀），例如 deepseek-flash。");
