@@ -97,14 +97,25 @@ org.xerial:sqlite-jdbc                                    ← 必须够新，窗
 - **`schema.sql` + seed 数据进 git，`.db` 文件 `.gitignore`**，首次启动生成；提供 `--reset-db`。评测前强制重置，否则分数会随调试状态漂移。
 - **"今天"作为参数注入** prompt 与 SQL 校验。凡是"上周/本月/次留"的题都锚定固定日期，否则跨年后准确率自己掉。
 - ⚠️ 隐私红线：样例数据行**会进 prompt**（进而进模型 API）。seed 里不许出现任何真实客户名、手机号、金额。
-- ⚠️ 技术前置：窗口函数需要 SQLite 3.25+，取决于 `sqlite-jdbc` 版本 —— Day-0 验一次 `SELECT row_number() OVER ()` 能不能跑。
+- ⚠️ 技术前置：窗口函数需要 SQLite 3.25+，取决于 `sqlite-jdbc` 版本 —— Day-0 验一次 `SELECT row_number() OVER ()` 能不能跑。**已验（3.53.4.0）。**
+
+**实测（2026-09-30，`db/GameDatabaseTest` + `db/SqlScriptTest`，12 条离线用例全绿）**
+
+建库路径已从"要装 sqlite3 CLI"改成纯 JDBC，四条只有跑过才知道的事：
+
+- ⚠️ **整文件喂 `Statement.execute()` 会炸**：`SQLITE_MAX_SQL_LENGTH` 默认 1,000,000 字节，`seed_data.sql` 是 1,015,282 字节 → `SQLITE_TOOBIG: statement too long`。必须有 `SqlScript.split()`（状态机：`''` 转义、`--` 行注释、`/* */` 块注释、双引号标识符里的分号都不算边界）。**这条不是理论风险，是第一版实现直接踩到的。**
+- ✅ **JDBC 建出来的库和 CLI 建的逐题同值**：262 条语句 / 约 1.3–2.4 秒，25 道题的 `truthSql` 全部复现出 `expect.value`（`GameDatabaseTest.reproducesEveryEvalExpectation` 就是 CI 版的 `verify_eval.py check`）。**含义：clone 者不需要 sqlite3、不需要 Python，光靠 Java + 仓库内容就能拿到同一份 ground truth** —— §2 的"10 分钟跑通"从假设变成有测试兜着的断言。
+- 只读连接：`jdbc:sqlite:<正斜杠绝对路径>?open_mode=1` → `isReadOnly()=true`，写操作报 `SQLITE_READONLY`；**文件不存在时直接 `SQLITE_CANTOPEN`，不会凭空建库**。但 `open_mode` 写成别的值（试了 2945）会静默建出空库 → 所以建库后强制 `verifyTables()`，错误在启动期就报成"路径指到别处了"，而不是等第一次查询。
+- ⚠️ **只读连接的 URL 上不许挂 pragma**：`?query_timeout=5000` 报 `CANTOPEN`、`?journal_mode=wal` 报 `SQLITE_READONLY`（pragma 是写操作）。超时只能走 `Statement.setQueryTimeout()`，实测可用。
+- Jackson 双大版本落到代码层：Boot 4 自带 `tools.jackson` 3.1.0（`JsonNode.asString()` 而非 `asText()`），框架用 `com.fasterxml` 2.21.1。**自己文件的解析用 `tools.jackson`；将来 `run_sql` 的工具 schema / 消息序列化必须 import `com.fasterxml` 才和框架对齐。**
+
 
 ## 6. 护栏链（`onActing` 中间件，线性四步）
 
-1. **JSqlParser 解析** → 判定：是否单条语句、是否为 SELECT、有无 DDL/DML、有无 `PRAGMA`/`ATTACH`/系统表。**禁止 `startsWith("SELECT")` 之类正则**（注释前缀、`WITH` CTE、`;DELETE` 多语句都能绕过）。
-2. **表白名单** → 只允许 §5 那 6–8 张表。
-3. **注入 LIMIT** → 未写 LIMIT 的强制加，防全表大结果集。
-4. **只读连接执行** → SQLite 以只读模式打开 + 查询超时。
+1. **JSqlParser 解析** → 判定：是否单条语句、是否为 SELECT、有无 DDL/DML、有无 `PRAGMA`/`ATTACH`/系统表。**禁止 `startsWith("SELECT")` 之类正则**（注释前缀、`WITH` CTE、`;DELETE` 多语句都能绕过）。　✅ `guard/SqlGuard`
+2. **表白名单** → 只允许 §5 那 6–8 张表。清单在 `SqlGuard.ALLOWED_TABLES`，对照源是 `GameDatabase.TABLES`。　✅
+3. **注入 LIMIT** → 未写 LIMIT 的强制加；模型自带更大的 LIMIT 会被压回上限。上限目前是 `SqlGuard` 的构造参数，下一步接 `game.guard.max-rows`。　✅
+4. **只读连接执行** → SQLite 以只读模式打开 + 查询超时。　✅ `db/GameDatabase.query`（`open_mode=1` + `setQueryTimeout`）
 
 失败返回**结构化拒绝理由**，这个理由直接进评测归因（§7）和前端的"为什么被拦"提示。
 
@@ -194,7 +205,8 @@ src/main/resources/
 > 实测确认了三件之前只是推断的事：① 换路之后 `Model` 的实现类**仍是** `OpenAIChatModel` —— SPI 只是套壳，白赚的是 `DeepSeekFormatter` + `thinking` 参数 + `nativeStructuredOutput=false`，不是另一个客户端实现，别在 README 里写错；② base starter 的 `agentscopeReActAgent` 正常吃到了我们自建 bean（`@ConditionalOnBean(Model)` 成立），四 bean 断言仍绿；③ `contextWindow=0` 已进启动日志，观察是否有静默裁剪。
 > fail-fast 三条单测（缺 key / 缺 model 名 / 名字还是 `gpt-4.1-mini`）均拒绝启动；带 key 的 smoke 测试重跑仍真调通。
 > ✅ **W1-c 前半：护栏第 1–3 步落地**（`guard/SqlGuard`+`Rejection`+`GuardOutcome`，29 条离线用例，CI 可跑）。实测推翻了 §6 原本预设的"检测多语句"路线，见 §6 末的实测清单 —— **一句话：执行文本必须取 AST 重新序列化的结果，绝不能用模型原文。**
-> **W1 剩余**：`db/`（game.db 由 schema+seed 生成、`--reset-db`、只读连接 + 查询超时 = 护栏第 4 步）、`run_sql` 工具、挂起式确认门。
+> **W1 剩余**：`run_sql` 工具本身、挂起式确认门。
+> ✅ **W1-c 后半：`db/` 落地**（`GameDatabase` + `SqlScript` + `DbProperties`，12 条离线用例）。整库 1MB seed 走 JDBC 会 `SQLITE_TOOBIG`，因此有了切分器；建库后强制验 8 张表，因为 SQLite 对错误路径会静默建空库。**最有价值的一条**：`GameDatabaseTest` 把 25 道题的 `truthSql` 全跑了一遍并逐条对上 `expect.value` —— 从此 §2 的"clone 下来 10 分钟能跑通"不依赖 sqlite3 CLI 也不依赖 Python，CI 就能证。细节见 §5 末实测清单。
 **W2**：`--eval` + 25 题 → 第一个真实准确率 → AG-UI 页面抄改 → 追问 5 题的状态传递 → **半天 throwaway 实验**：单独测框架原生 permission+resume，确认 #3096 到底在哪一层复现，**结论作为 issue 提给上游**。
 **W3**：README（中英）+ GIF + 准确率表 → 模型 ID 那条 issue → 收尾。
 **每周留一天不发功能**（W1 因 Boot 4 额外吃半天，这条从可选变成必须）。

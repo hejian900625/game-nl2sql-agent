@@ -15,6 +15,11 @@ agentscope:
     sys-prompt: 你是游戏运营数据查询助手。占位 prompt，W1 替换为带 schema 注入的正式版。
 
 game:
+  db:
+    # 仓库里不带 .db；文件不存在时由 classpath 的 schema+seed 现场生成（§5）
+    path: data/game.db
+    reset: false
+    query-timeout-seconds: 10
   model:
     name: deepseek-flash
     api-key: ${DEEPSEEK_API_KEY:}
