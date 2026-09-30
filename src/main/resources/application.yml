@@ -3,15 +3,20 @@ spring:
     name: game-nl2sql
 
 agentscope:
-  model:
-    provider: openai
   openai:
-    model-name: deepseek-flash
-    base-url: https://api.deepseek.com
-    api-key: ${DEEPSEEK_API_KEY:}
-    stream: true
+    # PLAN §3：Model bean 由 ModelConfig 走 ModelRegistry SPI 提供，starter 那条自动装配必须关掉。
+    # 它给的默认 model-name 是 gpt-4.1-mini，开着会静默打到 OpenAI 而不是 DeepSeek。
+    enabled: false
   agent:
+    # @ConditionalOnProperty 无 matchIfMissing，漏写则 agent bean 静默不存在
     enabled: true
     name: game-nl2sql
     max-iters: 4
     sys-prompt: 你是游戏运营数据查询助手。占位 prompt，W1 替换为带 schema 注入的正式版。
+
+game:
+  model:
+    name: deepseek-flash
+    api-key: ${DEEPSEEK_API_KEY:}
+    stream: true
+    enable-thinking: false

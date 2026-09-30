@@ -54,7 +54,7 @@ org.xerial:sqlite-jdbc                                    ← 必须够新，窗
 - SPI 路径：环境变量 `DEEPSEEK_API_KEY`，provider key `deepseek`，base 自动 `https://api.deepseek.com`；`DeepSeekModelProvider` **不给默认模型名**（剥掉 `deepseek:` 前缀原样转发）。
 - **2026-09-30 反编译补全（决定 W1 用哪条路）**：`agentscope-extensions-model-openai` 内嵌 `compat/deepseek/DeepSeekModelProvider`（`META-INF/services` 注册，`providerId=deepseek`，匹配 `deepseek:.+`）。`ModelRegistry.resolve("deepseek:deepseek-flash", ctx)` 会自动做四件 starter 路径**不做**的事：① 装 `DeepSeekFormatter`（处理"末条是 assistant 时补空 user"这类 DeepSeek 特有请求修正——多轮追问 5 题会踩）；② `nativeStructuredOutput(false)`（与 Day-0 实测的 `json_schema` 被拒一致）；③ 按 `ctx.enableThinking` 发 `{"thinking":{"type":"enabled|disabled"}}`，这就是 §4"思考档默认关"的现成开关；④ key 缺省回落读 `DEEPSEEK_API_KEY`。
   ⚠️ 代价：`ModelContextWindows.DEEPSEEK` 只登记了 `deepseek-v4-flash` / `deepseek-v4-pro`，**没有 `deepseek-flash`** → 实测 `model.getContextWindowSize()` 返回 **0**。框架若有按窗口做裁剪/压缩的逻辑，0 的语义要在 W1 第一天查清。
-  **结论（W1 第一个动作）**：Model bean 走 SPI（`ModelRegistry.resolve("deepseek:" + modelId, ctx{enableThinking=false, stream=…})`），openai starter 那条路用 `agentscope.openai.enabled: false` 关掉；`agentscope-spring-boot-starter` 仍然保留（agent/toolkit/memory 三个 bean 靠它，且 agent 是 `@ConditionalOnBean(Model)`，我们自己提供的 Model 满足条件）。骨架现在用的是 starter 路径，**是错的默认值，别当既成事实沿用**。
+  **结论（W1 第一个动作）**：Model bean 走 SPI（`ModelRegistry.resolve("deepseek:" + modelId, ctx{enableThinking=false, stream=…})`），openai starter 那条路用 `agentscope.openai.enabled: false` 关掉；`agentscope-spring-boot-starter` 仍然保留（agent/toolkit/memory 三个 bean 靠它，且 agent 是 `@ConditionalOnBean(Model)`，我们自己提供的 Model 满足条件）。骨架当时用的是 starter 路径，**是错的默认值 —— 2026-09-30 W1-a 已改掉，见 §10 W1 进度**。
 - Starter 路径：`agentscope.model.provider: openai` + `agentscope.openai.{enabled,api-key,model-name,base-url,endpoint-path,stream}`。
   ⚠️ **`model-name` 的默认值是 `gpt-4.1-mini`** → §9 的启动 fail-fast 专门挡它。
   ⚠️ 该 bean 只在 `provider=openai`（字符串精确匹配）时创建；`agentscope.agent.enabled=true` **必须显式写**（`@ConditionalOnProperty` 无 `matchIfMissing`），忘写则 agent bean 静默不存在——§10 门禁④ 的断言就是专门抓这个的。
@@ -143,7 +143,7 @@ org.xerial:sqlite-jdbc                                    ← 必须够新，窗
 ```
 pom.xml
 src/main/java/...
-  ├─ App                     ← 启动 fail-fast：model-name 非空且 != gpt-4.1-mini，并打一次最小 tool-call 探活，失败即拒绝启动
+  ├─ agent/ModelConfig       ← 启动 fail-fast：model 名非空且 != gpt-4.1-mini 且 key 非空，任一不满足则 Model bean 建立失败、进程拒绝启动。**联网探活不在启动路径里**（否则 §10 的 CI 不持 key 与 @SpringBootTest 一起破），由 `DeepSeekModelSmokeTest` 承担
   ├─ agent/                  ← ReActAgent bean、system prompt、schema 注入
   ├─ tool/                   ← run_sql
   ├─ guard/                  ← 护栏四步链（纯函数，可离线测）
@@ -181,6 +181,9 @@ src/main/resources/
 > **为什么 Day-0 有这道门禁**：本项目的一个前提（"我手上有能调通的配置"）在本轮访谈中被证伪过一次 —— `api.agnes.ai` 域名不解析、`qwen3-coder-plus` 不在该服务商模型列表里，也就是那份配置从未成功过。所以"配置未验证就开工"是已知会复发的失败模式。
 
 **W1**：Boot 4.0.4 骨架 → SQLite schema/seed 生成 → `run_sql` + 护栏四步（含离线单测）→ **挂起式确认门跑通 + 一条集成测试**（approve / edit / deny 三条都验）。
+> **进度（2026-09-30）**：✅ **W1-a/W1-b 完成**。`ModelConfig` 用 `ModelRegistry.resolve("deepseek:" + game.model.name, ctx)` 自建 `Model` bean，`agentscope.openai.enabled: false` 已把 starter 那条自动装配关掉。
+> 实测确认了三件之前只是推断的事：① 换路之后 `Model` 的实现类**仍是** `OpenAIChatModel` —— SPI 只是套壳，白赚的是 `DeepSeekFormatter` + `thinking` 参数 + `nativeStructuredOutput=false`，不是另一个客户端实现，别在 README 里写错；② base starter 的 `agentscopeReActAgent` 正常吃到了我们自建 bean（`@ConditionalOnBean(Model)` 成立），四 bean 断言仍绿；③ `contextWindow=0` 已进启动日志，观察是否有静默裁剪。
+> fail-fast 三条单测（缺 key / 缺 model 名 / 名字还是 `gpt-4.1-mini`）均拒绝启动；带 key 的 smoke 测试重跑仍真调通。**W1 剩余**：`run_sql` + 护栏四步、挂起式确认门。
 **W2**：`--eval` + 25 题 → 第一个真实准确率 → AG-UI 页面抄改 → 追问 5 题的状态传递 → **半天 throwaway 实验**：单独测框架原生 permission+resume，确认 #3096 到底在哪一层复现，**结论作为 issue 提给上游**。
 **W3**：README（中英）+ GIF + 准确率表 → 模型 ID 那条 issue → 收尾。
 **每周留一天不发功能**（W1 因 Boot 4 额外吃半天，这条从可选变成必须）。

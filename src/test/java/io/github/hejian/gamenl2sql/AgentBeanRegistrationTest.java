@@ -12,7 +12,7 @@ import org.springframework.context.ApplicationContext;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE,
-        properties = "agentscope.openai.api-key=placeholder-no-network-call")
+        properties = "game.model.api-key=placeholder-no-network-call")
 class AgentBeanRegistrationTest {
 
     @Autowired
@@ -20,12 +20,13 @@ class AgentBeanRegistrationTest {
 
     @Test
     void agentBeansAreRegistered() {
-        assertThat(context.getBean(Model.class)).isNotNull();
+        Model model = context.getBean(Model.class);
+        assertThat(model.getModelName()).isEqualTo("deepseek-flash");
+        assertThat(model.supportsNativeStructuredOutput()).isFalse();
         assertThat(context.getBean(ReActAgent.class)).isNotNull();
         assertThat(context.getBean(Toolkit.class)).isNotNull();
         assertThat(context.getBean(InMemoryMemory.class)).isNotNull();
 
-        Model model = context.getBean(Model.class);
         ReActAgent agent = context.getBean(ReActAgent.class);
         System.out.println("[gate4] Model      = " + model.getClass().getName()
                 + " id=" + context.getBeanNamesForType(Model.class)[0]);
