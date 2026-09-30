@@ -1,0 +1,110 @@
+{
+  "set": "adversarial",
+  "owner": "由助手生成，PLAN.md §7 分配的 10 道对抗题",
+  "note": "期望值不是手算的：每条 truthSql 都在 data/game.db（由 tools/SeedGen.java 生成）上真实跑过，数字直接抄自输出。改数据请改生成器重跑，再重算全部 truthSql，否则期望值会静默失效。",
+  "seedDataSha256": "57ea3ee342e5ae703d68dd91257e3c4d06a6a3bc51773276e0b4541dab4778f7",
+  "anchorToday": "2026-01-31",
+  "assertPolicy": "只比数字/行数，绝不比 SQL 字符串；金额一律 ±0.01 容差",
+  "questions": [
+    {
+      "id": "A01",
+      "layer": "聚合分组",
+      "trap": "退款不是负数：ord_st=2 的行 pay_amt 仍是正数",
+      "question": "1月26号到31号这几天，净付费总额是多少？",
+      "caliber": "净付费 = ord_st=1 且 is_del=0 的 pay_amt 之和；退款单(2)与失败单(3)既不计入也不做负向扣减。区间按 pay_time 闭左开右 [2026-01-26, 2026-02-01)。",
+      "truthSql": "select round(sum(pay_amt),2) from pay_ord where ord_st=1 and is_del=0 and pay_time>='2026-01-26' and pay_time<'2026-02-01'",
+      "expect": { "kind": "scalar", "value": 18736.82, "tol": 0.01 },
+      "ifTrapMissed": "同窗口只留 is_del=0 不过滤 ord_st → 22647.72；完全不过滤 → 23850.02；把退款当负数扣 → 偏低。三个错值彼此不同，能区分错法"
+    },
+    {
+      "id": "A02",
+      "layer": "单表",
+      "trap": "login_log 没有 is_del 列，加了就直接报错",
+      "question": "2026年1月25日那天一共有多少条登录记录？",
+      "caliber": "按 login_log.login_dt 精确等于 '2026-01-25' 计数，本表没有软删除列，不需要也不允许加 is_del 过滤。",
+      "truthSql": "select count(*) from login_log where login_dt='2026-01-25'",
+      "expect": { "kind": "rowcount", "value": 121 },
+      "ifTrapMissed": "加 is_del=0 → SQLite: no such column: is_del（执行失败，归\"护栏拒绝/执行错误\"，不是数字错）"
+    },
+    {
+      "id": "A03",
+      "layer": "多表JOIN",
+      "trap": "item_flow 没有 srv_id，必须经 role 两跳；且 chg_num 为负",
+      "question": "上周（1月19到1月25）101区服的角色一共消耗掉多少个道具数量？给我正数。",
+      "caliber": "消耗 = item_flow.chg_type=2，其 chg_num 本身是负数，答案取绝对值。区服归属要 item_flow→role→srv_id 两跳 JOIN。时间按 create_time 闭左开右 [2026-01-19, 2026-01-26)。",
+      "truthSql": "select abs(sum(f.chg_num)) from item_flow f join role r on r.role_id=f.role_id where r.srv_id=101 and f.chg_type=2 and f.create_time>='2026-01-19' and f.create_time<'2026-01-26'",
+      "expect": { "kind": "scalar", "value": 1561 },
+      "ifTrapMissed": "直接在 item_flow 上写 srv_id=101 → no such column: srv_id；忘取绝对值会得 -1561"
+    },
+    {
+      "id": "A04",
+      "layer": "多表JOIN",
+      "trap": "chan_id 是拼音缩写，含义只写在列注释里",
+      "question": "字节系渠道去年12月带来多少付费金额？",
+      "caliber": "字节系 = acct.chan_id='tt'（yx=游戏联运、tt=字节系、gw=官网包、ios=苹果商店，见 acct 列注释）。金额 = ord_st=1 且 is_del=0，时间 [2025-12-01, 2026-01-01)。",
+      "truthSql": "select round(sum(p.pay_amt),2) from pay_ord p join acct a on a.acct_id=p.acct_id where a.chan_id='tt' and p.ord_st=1 and p.is_del=0 and p.pay_time>='2025-12-01' and p.pay_time<'2026-01-01'",
+      "expect": { "kind": "scalar", "value": 22060.86, "tol": 0.01 },
+      "ifTrapMissed": "把\"字节系\"猜成 yx 或 gw 会得到完全不同的数（这四个渠道互斥，蒙对概率 1/4）"
+    },
+    {
+      "id": "A05",
+      "layer": "多表JOIN",
+      "trap": "srv_name 的 S 序号与 srv_id 不同序",
+      "question": "\"S1区-龙渊\"上周（1月19到25）净付费多少？",
+      "caliber": "必须按 srv.srv_name 精确定位区服，不许用名字里的\"S1\"推断 srv_id。净付费口径同 A01。",
+      "truthSql": "select round(sum(p.pay_amt),2) from pay_ord p join srv s on s.srv_id=p.srv_id where s.srv_name='S1区-龙渊' and p.ord_st=1 and p.is_del=0 and p.pay_time>='2026-01-19' and p.pay_time<'2026-01-26'",
+      "expect": { "kind": "scalar", "value": 3000.00, "tol": 0.01 },
+      "ifTrapMissed": "以为 S1=srv_id 101 会得 500.00 —— 差了 6 倍，是最干脆的区分度"
+    },
+    {
+      "id": "A06",
+      "layer": "单表",
+      "trap": "vip_lv=0 表示非会员，不是 NULL",
+      "question": "非会员角色一共有多少个？",
+      "caliber": "非会员 = role.vip_lv=0（本列 NOT NULL，0 就是非会员），只算没删的号（is_del=0 的角色）。",
+      "truthSql": "select count(*) from role where vip_lv=0",
+      "expect": { "kind": "rowcount", "value": 313 },
+      "ifTrapMissed": "用 vip_lv is null 得 0；用 vip_lv is not null 得 450（=全部角色）"
+    },
+    {
+      "id": "A07",
+      "layer": "单表",
+      "trap": "first_pay_dt 为 NULL 才是\"从未付费\"，不能用它当\"老玩家\"",
+      "question": "到今天为止，一个钱都没付过的账号有多少个？",
+      "caliber": "从未付费 = acct.first_pay_dt IS NULL。已与事实表交叉验证：等于\"没有任何 ord_st=1 订单\"的账号数（两条 SQL 都得 140）。",
+      "truthSql": "select count(*) from acct where first_pay_dt is null",
+      "expect": { "kind": "rowcount", "value": 140 },
+      "ifTrapMissed": "写成 first_pay_dt IS NOT NULL 得 160；改用 not in (select acct_id from pay_ord) 而不排除 ord_st=2/3 → 139，正好漏掉只有退款单的 acct1300"
+    },
+    {
+      "id": "A08",
+      "layer": "聚合分组",
+      "trap": "reg_time 是 'YYYY-MM-DD HH:mm:ss'，与纯日期列格式不同",
+      "question": "1月7号当天注册了多少个账号？",
+      "caliber": "按 reg_time 的日期前缀取 2026-01-07（该列带时分秒，不能与 'YYYY-MM-DD' 直接相等比较）。",
+      "truthSql": "select count(*) from acct where substr(reg_time,1,10)='2026-01-07'",
+      "expect": { "kind": "rowcount", "value": 11 },
+      "ifTrapMissed": "reg_time='2026-01-07' 直接相等比较得 0 —— 且 0 看起来像\"合理答案\"，最容易被放过"
+    },
+    {
+      "id": "A09",
+      "layer": "聚合分组",
+      "trap": "REAL 求和的浮点尾差：这条专测评测侧容差，不是测模型",
+      "question": "订单表里所有 pay_amt 加起来是多少？不要做任何过滤。",
+      "caliber": "字面 SUM，包含退款(2)、失败(3)与 is_del=1，不加任何 WHERE。期望值按 ROUND(SUM(pay_amt),2) 取，比对必须用 ±0.01 容差。",
+      "truthSql": "select round(sum(pay_amt),2) from pay_ord",
+      "expect": { "kind": "scalar", "value": 263489.76, "tol": 0.01 },
+      "ifTrapMissed": "无 —— 这题的失败模式在评测器：精确相等比对会把正确答案判错（§7 容差规则的活体样本）"
+    },
+    {
+      "id": "A10",
+      "layer": "对抗",
+      "trap": "chg_num 有正有负，但这一题要的就是带符号合计",
+      "question": "今年1月\"交易\"类的道具流水，chg_num 合计是多少？",
+      "caliber": "交易 = chg_type=4，其 chg_num 有正有负（买入为负、卖出为正），答案要**带符号**求和，不要取绝对值，也不要只算正数。时间按 create_time 前缀 2026-01。",
+      "truthSql": "select sum(chg_num) from item_flow where chg_type=4 and substr(create_time,1,7)='2026-01'",
+      "expect": { "kind": "scalar", "value": 686 },
+      "ifTrapMissed": "习惯性套 ABS() 得 5632 —— 与正确答案差近 8 倍，专门用来抓\"见负数就 ABS\"的肌肉记忆"
+    }
+  ]
+}

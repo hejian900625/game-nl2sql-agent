@@ -1,0 +1,17 @@
+spring:
+  application:
+    name: game-nl2sql
+
+agentscope:
+  model:
+    provider: openai
+  openai:
+    model-name: deepseek-flash
+    base-url: https://api.deepseek.com
+    api-key: ${DEEPSEEK_API_KEY:}
+    stream: true
+  agent:
+    enabled: true
+    name: game-nl2sql
+    max-iters: 4
+    sys-prompt: 你是游戏运营数据查询助手。占位 prompt，W1 替换为带 schema 注入的正式版。
