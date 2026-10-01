@@ -420,7 +420,7 @@ tools/
    - #3096 的复现确认评论 → <https://github.com/agentscope-ai/agentscope-java/issues/3096#issuecomment-5925939634>（未开新 issue，理由同上；正文另带一条相邻坑：自己重建 `ToolUseBlock` 时框架校验的是 `getContent()` 原始 JSON）。
    - `ModelContextWindows.DEEPSEEK` 缺正式名的新 issue → **agentscope-ai/agentscope-java#3379**（open，标签 `bug`）：<https://github.com/agentscope-ai/agentscope-java/issues/3379>。
    两条的可读记录分别写在 `docs/hitl-pause-resume-experiment.md` 与 `docs/upstream-deepseek-model-ids.md`。**注意**：实际发出的正文存在 `research/`（gitignored），两份文档里的是草稿与摘要，不逐字等同 —— 以后要引用以 issue 页面为准。
-4. **项目收尾后轮换 DeepSeek key**：它曾被贴进过聊天窗口。仓库里从未出现明文（key 只走环境变量，`.env` 已 ignore），但聊天历史不在我的控制范围。
+4. **轮换 DeepSeek key —— 优先级已在 2026-10-01 提高，且不再只是"收尾再做"**：它进过两个我不控制的地方 —— ① 早先被贴进聊天窗口；② W3-h 我自己制造的那次：一条写错的断言把真 key 打进了 surefire 的两份报告文件（`target/surefire-reports/…EnvFileImportTest.txt` 与同名 XML）。那两份已删、全仓复查只剩 `.env` 本身含它，但**磁盘上写过就等于泄露过**，删文件不算补救。仓库侧干净这件事不变：key 从未进过任何提交，`.env` 一直 gitignore。动作在你那边：DeepSeek 控制台删掉这枚 key、建一枚新的，然后只改 `.env` 一行 —— 代码、README、CI 都不含 key，不用动。换完如果想验，`mvn -o -B -Dtest=DeepSeekModelSmokeTest test` 是唯一真打网络的那条（无 key 时它自己 skip）。
 
 ### 15.2 等发版才能做的 —— 两件都编成了会自己变红的断言，不靠我记得
 
