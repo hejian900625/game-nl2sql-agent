@@ -109,6 +109,13 @@ prompt 由"运行时的库"拼出来，不是抄一份 `schema.sql`：`GameDatab
 - **`agentscope.agent.enabled` 现在必须是 `false`**：agent 与 toolkit 两个 bean 都由我们自建（`@ConditionalOnMissingBean` 会让位），把 starter 那份 `sys-prompt` 留在 yml 里只会误导。`game.agent.{name,max-iters,today}` 是我们的那份配置，`max-iters` 同时进 builder 和 prompt 正文（两处不许漂移），`today` 绑成 `LocalDate` —— 格式写错就让启动失败，而不是让 25 道相对时间题一起静默漂移。
 - 随之做的一个**派生决定（可推翻）**：`run_sql` 的 `@Tool description` 里原本抄了一遍口径（净付费、哪些表没 is_del、两种日期格式），现在删成只剩"单条 SELECT + 权威见 DDL"。**理由**：同一规则两处可写就会两处漂移，且漂移时无法归因（是 prompt 没用还是工具说明没用）；代价是第一次评测可能因为"规则只在 prompt 里"而变差 —— 那正是我们想要的信号，别提前用重复去掩盖。
 
+**评测跑手的前置实测（2026-10-01 W2-b，一次性探活 `AgentProbeTest`，结论落定后该类已删）**
+
+- ⚠️ **`AgentState.context` 会跨 `call()` 累积**：同一实例第 1 轮后 4 条消息（`USER` / `ASSISTANT+ToolUseBlock` / `TOOL+ToolResultBlock` / `ASSISTANT+TextBlock`），第 2 轮后 8 条。**直接 consequence：`--eval` 不能共用那个 Spring 单例** —— 25 道题排队跑的话，第 20 题的上下文里装着前 19 题的 SQL 和数字，那个准确率是抄来的。所以 `AgentFactory` 每题 `create()` 一个新实例（探活实测第 2 轮"那1月30号呢？"在同一实例上能自己解析成 `login_dt = '2026-01-30'` 并答 109，说明**追问题的指代继承本来就靠这个累积**，每题一个新实例正好同时满足两件事：单轮题干净、多轮题在同一实例上连着问）。
+- **`auto_approve` 下 `pendingSnapshot()` 全程为 0**：无人值守这条链不会挂起。
+- ⚠️ **`Toolkit.callTool()` 直接返回的 `ToolResultBlock` 里 `id` 与 `name` 都是 `null`**（`EvalTraceTest.resultBlocksDoNotCarryTheCallId` 钉住）⇒ 想把结果对回那次调用只能按出现顺序，别依赖 id。
+- ⚠️ **`-Dspring-boot.run.arguments="--a,--b,--c"` 的逗号不会被拆开**（实测三条里只有第一条生效，`--server.port=18081` 没进去、进程仍然占 8080 起不来）。跑评测用：程序参数只给 `--eval`，其余走 `-Dspring-boot.run.jvmArguments="-Dserver.port=18082 -Dgame.confirm.mode=auto_approve"`。
+
 ## 5. 数据层
 
 - **自造游戏域 6–8 张表**，不用 Sakila/Chinook/Northwind：公开样例库的 schema 太出名，模型是在背答案而不是读 DDL，评测分会虚高。
@@ -168,6 +175,39 @@ prompt 由"运行时的库"拼出来，不是抄一份 `schema.sql`：`GameDatab
 - 运行形态：`--eval` 命令行模式，**绝不进 `mvn test`**（要打真实外部 API）。结果 JSON **提交进仓库**，README 的说服力靠这条曲线。
 - **CI 不放 API key**：Actions 只跑离线护栏单测（固定 SQL 输入断言拒/放）+ 评测脚本自身的测试。真实评测本地手动跑。
 - **thinking 对照实验**：默认非思考档钉死不变；Day-0 实测思考档会不会撞 #3299/#3209（思考 + 多轮在 OpenAI 兼容路径上 400）。能跑就跑第二组，README 报两个数；400 就把对照变量换成"给不给口径示例"。
+
+**`--eval` 跑手已落地 + 首轮真实准确率（2026-10-01 W2-b）**
+
+跑手四件：`eval/EvalSet`（读题，25 题的结构约束由 `EvalSetTest` 钉）、`eval/EvalTrace`（从上下文抽"调了哪条 SQL、工具回了什么"）、`eval/EvalRunner`（每题一个新实例、串行、归因分桶）、`eval/EvalCommand`（`--eval` 才跑，写 UTF-8 JSON 到 `eval-results/`）。归因分桶实测：**三轮里"未调工具 / 护栏拒绝 / 执行报错 / 人拒绝"全为 0，失败全是"跑出来了但数不对"** —— 护栏与工具链不是瓶颈，口径理解才是。
+
+判分规则被实测纠了两次，两次都是**评分器把对的判成错的**：
+1. 第一版"只比最后一次成功 `run_sql` 结果的**首格**" → B10 的 `select srv_id, round(sum(dur_sec)/3600.0,2) ... limit 1` 期望数在**第二列**，答复 2980.41 明明对，被判成"got=105"（区服号）；T01 同形（1000.00 对，被判 101）。规则改成**首行的任一数值单元格**。仍然只取**首行**是刻意的收紧：按天分组那张表里没有"总数"，本该判错，不许它在第二行撞对。
+2. 另加一条宽松口径 `accuracyCountingAnswerText`：B05 次留率**三轮都"错"**，因为模型分两步查（注册数、次日登录数），最后 `27 / 40 = 67.50%` 是用文字做的除法，商永远不在单元格里。这种题严格口径判它错等于用评分器的格式判模型错，所以两个数一起报，**README 只许两个都写，不许挑好看的那个**。
+
+三轮真实数字（同 prompt、同库、同模型，唯一变量是模型采样）：
+
+| 结果文件 | 严格 | 宽松 | 判错的题 |
+|---|---|---|---|
+| `archive/eval-20261001-102121-first-cell-rule.json` | 84% (21/25) | 92% | A06、B07 + **评分器误判** B10、T01（旧 first-cell 规则，已挪出 `eval-results/` 根目录，画曲线时不要用它） |
+| `eval-20261001-102834` | 88% (22/25) | 92% | B03、B05、B07 |
+| `eval-20261001-103058` | 88% (22/25) | 92% | B04、B05、B07 |
+
+> **结论：首轮真实准确率 88%（严格）/ 92%（宽松），§2 的 75% 门槛达成。但单轮数字不可比** —— 三轮里会翻脸的题是 A06 / B03 / B04 / B05 这四道，稳定失败的只有 B07 一道。以后任何"我改好了，涨了几个点"的说法，必须先证明它不是这 ±4 个点的采样噪声（做法：同一份 prompt 连跑 3 轮，比翻脸集合，别比总分）。
+
+逐题归因（记在这里，**不许现在就回去改 prompt 凑分**）：
+- **B07 三轮全错，而且三种错法**：① 把时间窗口套在 `reg_time` 上（题面"上周…注册的账号里"字面就是这个意思，而口径声明说的是登录窗口）；② 年份写成 2025，查到 0 之后自己发现年份错了、停下来反问而不重跑；③ 第 3 轮跑了 4 步答 5。**这是 §7"代笔题面与自身口径打架"的第一个实证**：题面与口径冲突时模型跟题面、判分跟口径，那道题的 75% 门槛下没人能稳过。修法在题目侧（改成"1月19到25号登录过的联运渠道账号有多少个"），但**本轮不改题再跑** —— 看见结果之后改题面是挪门柱。
+- **A06 翻脸**：run1 加 `is_del=0` 得 294，run2/3 不加得 313。prompt 只说了"role 有 is_del 这一列"，没说"角色计数默认要不要排除已删号"—— §12 那条坑没有默认口径，模型就自己掷骰子。
+- **B03 命中 `ifTrapMissed` 预言的 65**（跨服 `SUM(login_cnt)` 合并后再判 >3）。对抗题的设计有效，这条要写进 README 当卖点。
+- **B04**：run3 日均 DAU 答成 39.0，run1/2 对。聚合语义不稳，与 A06 同属"口径默认值缺失"一类。
+
+复跑命令（key 只在环境变量里；控制台是 ASCII，中文在 GBK 控制台下会打烂，看 JSON 别看日志）：
+```
+export JAVA_HOME=<你的 21> && set -a && . ./.env && set +a
+D:/tools/apache-maven-3.9.16/bin/mvn -o -B spring-boot:run \
+  -Dspring-boot.run.arguments=--eval \
+  -Dspring-boot.run.jvmArguments="-Dserver.port=18082 -Dgame.confirm.mode=auto_approve"
+```
+`--eval` 在 `game.confirm.mode != auto_approve` 时**拒绝启动**（人确认模式下 25 道题会各自挂起等点击），不是静默等超时。
 
 ## 8. 会话状态
 
@@ -230,6 +270,7 @@ src/main/resources/
 > ✅ **W1-c 后半：`db/` 落地**（`GameDatabase` + `SqlScript` + `DbProperties`，12 条离线用例）。整库 1MB seed 走 JDBC 会 `SQLITE_TOOBIG`，因此有了切分器；建库后强制验 8 张表，因为 SQLite 对错误路径会静默建空库。**最有价值的一条**：`GameDatabaseTest` 把 25 道题的 `truthSql` 全跑了一遍并逐条对上 `expect.value` —— 从此 §2 的"clone 下来 10 分钟能跑通"不依赖 sqlite3 CLI 也不依赖 Python，CI 就能证。细节见 §5 末实测清单。
 **W2**：`--eval` + 25 题 → 第一个真实准确率 → AG-UI 页面抄改 → 追问 5 题的状态传递 → **半天 throwaway 实验**：单独测框架原生 permission+resume，确认 #3096 到底在哪一层复现，**结论作为 issue 提给上游**。
 > **进度（2026-09-30 W2-a）**：✅ 带 schema 注入的正式 prompt 与自建 `ReActAgent` bean 完成（细节见 §4 末）。61 条用例全绿（1 skip = 无 key 的 smoke）。W2 剩余：`--eval` 跑手 + 结果 JSON、AG-UI 页面、追问 5 题的状态传递、#3096 的 throwaway 实验。
+> **进度（2026-10-01 W2-b）**：✅ `--eval` 跑手落地并**真跑三轮**（DeepSeek flash，`auto_approve`）。**严格口径 88% / 宽松口径 92%，§2 的 75% 门槛达成**；判分规则被实测纠了两次（first-cell 误判 B10/T01、文字做除法误判 B05），三轮唯一稳定失败的题只有 B07 一道 —— 全部细节、逐题归因与"别拿单轮总分比改进"的纪律写在 §7 末。72 条离线用例全绿（1 skip = 无 key 的 smoke），`eval-results/*.json` 三份进仓库。W2 剩余：AG-UI 页面、追问 5 题的 §8 自存状态（探活已证"同一实例跨轮"这条路本身能答对指代，剩下的是它与 §8 结构的边界以及换 threadId 怎么办）、#3096 的 throwaway 实验。
 **W3**：README（中英）+ GIF + 准确率表 → 模型 ID 那条 issue → 收尾。
 **每周留一天不发功能**（W1 因 Boot 4 额外吃半天，这条从可选变成必须）。
 
