@@ -24,7 +24,9 @@ cp .env.example .env      # set DEEPSEEK_API_KEY
 mvn spring-boot:run       # data/game.db is generated from schema + seed on first boot
 ```
 
-Open <http://localhost:8080>. `.env` is read by one line of `spring.config.import` in `application.yml` (Spring Boot does not read it on its own); an exported environment variable of the same name overrides the file.
+Open <http://localhost:8080>.
+
+Timed on 2026-10-01 in a throwaway clean directory: full `git clone` 3 s; `mvn spring-boot:run` to the first HTTP 200 in **9.0 s** with a warm Maven repo, **98 s** with an empty one (~97 MB of dependencies and plugins). Both numbers come from the project's author on a machine that already has JDK 21 + Maven 3.9 + a fast mirror — no stranger has been timed. `.env` is read by one line of `spring.config.import` in `application.yml` (Spring Boot does not read it on its own); an exported environment variable of the same name overrides the file.
 
 Without an API key you still get 90 of the 91 tests (`mvn test`): guardrail, database build, approve/edit/deny/timeout paths, prompt content, AG-UI routing and thread-session isolation, eval scoring arithmetic, the `.env` import and its precedence, the two-layer probe of the framework's native pause/resume (#3096), and the measured DeepSeek model-id / context-window facts.
 

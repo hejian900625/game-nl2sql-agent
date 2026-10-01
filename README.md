@@ -32,6 +32,8 @@ mvn spring-boot:run         # 依赖已缓存时，到 Started App 约 10 秒；
 
 打开 <http://localhost:8080> 就是上面那个页面（端口被占就加 `-Dspring-boot.run.jvmArguments="-Dserver.port=18086"`）。想换库里的"今天"（相对时间题的锚点）用 `--game.agent.today=2026-01-31`；想重建数据库用 `--game.db.reset=true`。
 
+**从零到页面的实测耗时**（2026-10-01，在一个只有这一次克隆的干净目录里量的，不是估算）：全量 `git clone` **3 秒** / 2.7 MB；`mvn spring-boot:run` 到第一个 HTTP 200，**依赖已缓存时 9.0 秒**，换成**空的本地 Maven 仓**（首次要下约 97 MB 依赖、插件在内）**98 秒**；`data/game.db` 两次都是现场生成的，262 条语句 / 约 1.26 秒。两个前提别忽略：跑这台机器已有 JDK 21、Maven 3.9 和 Aliyun 镜像（本机上 `repo1.maven.org` 实测约 50KB/s、镜像约 135KB/s，所以没配镜像的读者冷下载大概要慢 2–3 倍 —— 这是从两条速率推的，不是一次"无镜像冷跑"的实测），而操作者是本项目的作者。**"陌生人 10 分钟跑通"这句话里，"陌生人"那一半还没有数据。**
+
 **没有 key 也能验证一大半**：`mvn test` 有 91 条用例，其中 90 条纯离线（护栏、建库、确认门的 approve/edit/deny/超时、prompt 内容、AG-UI 路由与会话隔离、评测判分算术、`.env` 的读取与优先级、框架 pause/resume 的两层探针、DeepSeek 模型名与框架窗口表的实测锚点），剩下 1 条是需要 key 的探活、无 key 时自动 skip。key 只从 `.env` 或环境变量进（`.env` 已 gitignore），git 历史里不会出现明文。
 
 ## 准确率
@@ -93,7 +95,7 @@ src/main/java/.../
 - **AgentScope 2.0.3 的 DeepSeek 模型名表是旧的**：`ModelContextWindows.DEEPSEEK` 里只有 `deepseek-v4-flash` / `deepseek-v4-pro`，没有官方现在的正式名 `deepseek-flash`，于是用正式名建出来的 model `getContextWindowSize()` 返回 **0**（旧别名反而看着正常，因为 DeepSeek 服务端把它当别名收）。2.0.3 内核没有任何路径读这个值，所以今天不影响功能，但别照框架文档里的模型名写配置。实测与上游 note 见 [`docs/upstream-deepseek-model-ids.md`](docs/upstream-deepseek-model-ids.md)，已提到框架仓库 [agentscope-ai/agentscope-java#3379](https://github.com/agentscope-ai/agentscope-java/issues/3379)。
 - **页面不渲染 Markdown**（GIF 里能看到 `**` 和 ``` 原样），因为演示页抄的是官方 `examples/agui` 的极简实现。
 - **quickstart 里 `cp .env.example .env` 这一步曾经是装饰**：Spring Boot 不自动读 `.env`，而项目也没有任何一行代码读它，所以照 README 走完的人在启动时拿到的是 `DEEPSEEK_API_KEY 未设置` 的 fail-fast（2026-10-01 由真人实测炸出来）。现在补了 `spring.config.import`，并有三条离线断言锁着机制与优先级。留在这里是因为它暴露了本项目的一条纪律：**"我这边能起"不等于"照 README 能起"** —— 我此前的启动验证是在一个已经导出过 key 的 shell 里做的，所以从没碰到这个洞。
-- **CI 已经真跑过并且绿了**（最新一次 2026-10-01，GitHub Actions run `36829504759`：91 条用例、0 失败、1 跳过）。它按"CI 不持 key"的约束只跑离线用例 —— 也就是说**评测分数不在 CI 里**，那三个数字来自本机的 `--eval` 真跑，结果 JSON 进仓库。
+- **CI 已经真跑过并且绿了**（最新一次 2026-10-01，GitHub Actions run `36833147161`：91 条用例、0 失败、1 跳过）。它按"CI 不持 key"的约束只跑离线用例 —— 也就是说**评测分数不在 CI 里**，那三个数字来自本机的 `--eval` 真跑，结果 JSON 进仓库。
 - 评测的 25 道题里 15 道业务题的口径是**代笔**的（`owner: qoder`），不是真实业务方声明；题面与口径冲突时以口径为准，这类题（B07）模型没人能稳过。
 
 ## 许可与来源
