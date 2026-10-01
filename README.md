@@ -93,7 +93,7 @@ src/main/java/.../
 - **AgentScope 2.0.3 的 DeepSeek 模型名表是旧的**：`ModelContextWindows.DEEPSEEK` 里只有 `deepseek-v4-flash` / `deepseek-v4-pro`，没有官方现在的正式名 `deepseek-flash`，于是用正式名建出来的 model `getContextWindowSize()` 返回 **0**（旧别名反而看着正常，因为 DeepSeek 服务端把它当别名收）。2.0.3 内核没有任何路径读这个值，所以今天不影响功能，但别照框架文档里的模型名写配置。实测与上游 note 见 [`docs/upstream-deepseek-model-ids.md`](docs/upstream-deepseek-model-ids.md)，已提到框架仓库 [agentscope-ai/agentscope-java#3379](https://github.com/agentscope-ai/agentscope-java/issues/3379)。
 - **页面不渲染 Markdown**（GIF 里能看到 `**` 和 ``` 原样），因为演示页抄的是官方 `examples/agui` 的极简实现。
 - **quickstart 里 `cp .env.example .env` 这一步曾经是装饰**：Spring Boot 不自动读 `.env`，而项目也没有任何一行代码读它，所以照 README 走完的人在启动时拿到的是 `DEEPSEEK_API_KEY 未设置` 的 fail-fast（2026-10-01 由真人实测炸出来）。现在补了 `spring.config.import`，并有三条离线断言锁着机制与优先级。留在这里是因为它暴露了本项目的一条纪律：**"我这边能起"不等于"照 README 能起"** —— 我此前的启动验证是在一个已经导出过 key 的 shell 里做的，所以从没碰到这个洞。
-- **CI 已经真跑过并且绿了**（2026-10-01，GitHub Actions run `36824220129`：88 条用例、0 失败、1 跳过、15 秒）。它按"CI 不持 key"的约束只跑离线用例 —— 也就是说**评测分数不在 CI 里**，那三个数字来自本机的 `--eval` 真跑，结果 JSON 进仓库。
+- **CI 已经真跑过并且绿了**（最新一次 2026-10-01，GitHub Actions run `36829504759`：91 条用例、0 失败、1 跳过）。它按"CI 不持 key"的约束只跑离线用例 —— 也就是说**评测分数不在 CI 里**，那三个数字来自本机的 `--eval` 真跑，结果 JSON 进仓库。
 - 评测的 25 道题里 15 道业务题的口径是**代笔**的（`owner: qoder`），不是真实业务方声明；题面与口径冲突时以口径为准，这类题（B07）模型没人能稳过。
 
 ## 许可与来源
