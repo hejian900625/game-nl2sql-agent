@@ -2,6 +2,8 @@
 
 [中文](README.md) | [English](README.en.md)
 
+[![CI](https://github.com/hejian900625/game-nl2sql-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/hejian900625/game-nl2sql-agent/actions/workflows/ci.yml)
+
 ![人把 SQL 从 `> 3` 改成 `> 5` 后执行](docs/demo.gif)
 
 用 **AgentScope Java 2.0.3 + DeepSeek** 做的只读 NL→SQL agent：中文提一句运营问题 → 模型写 SQL → **四步护栏**改写/拒绝 → 停在**人工确认门**上（人可以直接改语句）→ 执行 → 表格 + 结论 + 口径说明。
@@ -75,11 +77,11 @@ src/main/java/.../
 
 ## 已知问题（照直说）
 
-- **AgentScope 2.0.3 的原生 HITL resume 在 AG-UI 层丢事件**（上游 #3096，已在本地复现）：批准之后工具**会**执行、结果**会**进第二次模型调用，但 `TOOL_CALL_RESULT`/`TOOL_CALL_END` 一条都不发到 SSE 流上（stream context 每个 run 新建），按事件流渲染的前端会一直等不到结果。修复 PR #3100 已合入 main，至今未发版。实测、机制与可迁移条件写在 [`docs/hitl-pause-resume-experiment.md`](docs/hitl-pause-resume-experiment.md)；本项目把确认门做在工具内部，工具调用与结果发生在同一个 run 里，所以不受这条影响。
+- **AgentScope 2.0.3 的原生 HITL resume 在 AG-UI 层丢事件**（上游 #3096，已在本地复现）：批准之后工具**会**执行、结果**会**进第二次模型调用，但 `TOOL_CALL_RESULT`/`TOOL_CALL_END` 一条都不发到 SSE 流上（stream context 每个 run 新建），按事件流渲染的前端会一直等不到结果。修复 PR #3100 已合入 main，至今未发版。实测、机制与可迁移条件写在 [`docs/hitl-pause-resume-experiment.md`](docs/hitl-pause-resume-experiment.md)；本项目把确认门做在工具内部，工具调用与结果发生在同一个 run 里，所以不受这条影响。我们在这个 bug 上能加的增量（离线复现 + 一条相邻坑）已作为[评论补在 #3096 上](https://github.com/agentscope-ai/agentscope-java/issues/3096#issuecomment-5925939634)。
 - **DeepSeek 不支持 `response_format: json_schema`**（官方端点实测 400），所以本项目不依赖框架的结构化输出。
-- **AgentScope 2.0.3 的 DeepSeek 模型名表是旧的**：`ModelContextWindows.DEEPSEEK` 里只有 `deepseek-v4-flash` / `deepseek-v4-pro`，没有官方现在的正式名 `deepseek-flash`，于是用正式名建出来的 model `getContextWindowSize()` 返回 **0**（旧别名反而看着正常，因为 DeepSeek 服务端把它当别名收）。2.0.3 内核没有任何路径读这个值，所以今天不影响功能，但别照框架文档里的模型名写配置。实测与上游 note 见 [`docs/upstream-deepseek-model-ids.md`](docs/upstream-deepseek-model-ids.md)。
+- **AgentScope 2.0.3 的 DeepSeek 模型名表是旧的**：`ModelContextWindows.DEEPSEEK` 里只有 `deepseek-v4-flash` / `deepseek-v4-pro`，没有官方现在的正式名 `deepseek-flash`，于是用正式名建出来的 model `getContextWindowSize()` 返回 **0**（旧别名反而看着正常，因为 DeepSeek 服务端把它当别名收）。2.0.3 内核没有任何路径读这个值，所以今天不影响功能，但别照框架文档里的模型名写配置。实测与上游 note 见 [`docs/upstream-deepseek-model-ids.md`](docs/upstream-deepseek-model-ids.md)，已提到框架仓库 [agentscope-ai/agentscope-java#3379](https://github.com/agentscope-ai/agentscope-java/issues/3379)。
 - **页面不渲染 Markdown**（GIF 里能看到 `**` 和 ``` 原样），因为演示页抄的是官方 `examples/agui` 的极简实现。
-- **`.github/workflows/ci.yml` 还没被真正执行过**——本仓库尚未推到远端。它按"CI 不持 key"的约束写，只该跑离线用例。
+- **CI 已经真跑过并且绿了**（2026-10-01，GitHub Actions run `36824220129`：88 条用例、0 失败、1 跳过、15 秒）。它按"CI 不持 key"的约束只跑离线用例 —— 也就是说**评测分数不在 CI 里**，那三个数字来自本机的 `--eval` 真跑，结果 JSON 进仓库。
 - 评测的 25 道题里 15 道业务题的口径是**代笔**的（`owner: qoder`），不是真实业务方声明；题面与口径冲突时以口径为准，这类题（B07）模型没人能稳过。
 
 ## 许可与来源

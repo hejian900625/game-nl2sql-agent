@@ -89,8 +89,12 @@
 ## 上游动作：不发新 issue，只发一条复现确认
 
 #3096 已于 2026-09-11 closed、修复 #3100 已合入 main 且未发版，再开一个是重复。有价值的增量是
-"另一个 provider/环境下的独立复现 + 一条容易踩的相邻坑"，草稿如下（本项目无上游写权限，也暂未登录
-GitHub，留在这里待发版前后再贴）：
+"另一个 provider/环境下的独立复现 + 一条容易踩的相邻坑"。
+
+**已发出（2026-10-01）**：<https://github.com/agentscope-ai/agentscope-java/issues/3096#issuecomment-5925939634>
+（`gh issue comment`，用他账号 `hejian900625` 登录；正文与下面这段草稿同旨，只是去掉了引用块前缀以适配
+普通评论排版 —— **留在这份文档里的草稿不是最终发出的字，发出的是 `research/comment-3096.md`，那是
+gitignored 的临时件，所以本段是唯一长期可查的记录，别把两者当成同一份文本。**）
 
 > Confirmed on 2.0.3 (`agentscope-extensions-agui`) with a scripted model — no network involved, so the
 > repro is fully deterministic. Run 1 emits `TOOL_CALL_START/ARGS/END` and finishes with

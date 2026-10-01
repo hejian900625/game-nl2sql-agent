@@ -59,7 +59,8 @@ curl -s -X POST https://api.deepseek.com/chat/completions \
 已有的 15 条 deepseek 标题 issue/PR 全是别的主题（thinking 模式的 `reasoning_content`、结构化输出、
 dashscope 路由等），没有一条讲模型名表或窗口值。**不是重复。**
 
-草稿（本项目仓库无 remote、也没登录 GitHub CLI，所以先发在这儿，等你点头我再提）：
+**已提交：[agentscope-ai/agentscope-java#3379](https://github.com/agentscope-ai/agentscope-java/issues/3379)**（2026-10-01，`gh issue create`，标签 `bug` 由模板自动打上）。
+下面是当时那份草稿的正文（与已发内容同旨，格式按他们的 `bug_report.md` 模板重排过）：
 
 > **[Bug]: `ModelContextWindows.DEEPSEEK` is missing DeepSeek's current canonical model id, so `getContextWindowSize()` returns 0 for the name DeepSeek itself reports**
 >

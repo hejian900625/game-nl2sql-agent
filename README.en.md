@@ -2,6 +2,8 @@
 
 [中文](README.md) | [English](README.en.md)
 
+[![CI](https://github.com/hejian900625/game-nl2sql-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/hejian900625/game-nl2sql-agent/actions/workflows/ci.yml)
+
 A read-only natural-language-to-SQL agent built on **AgentScope Java 2.0.3** + **DeepSeek**, with a real guardrail stack and a human approval gate. Chinese-language project; this file is the short version — see [README.md](README.md) for the design notes and the honest list of known issues.
 
 ![a human edits the SQL before it runs](docs/demo.gif)
@@ -17,6 +19,7 @@ What makes it more than an API wrapper:
 Needs JDK 21 and Maven 3.9+.
 
 ```bash
+git clone https://github.com/hejian900625/game-nl2sql-agent.git && cd game-nl2sql-agent
 cp .env.example .env      # set DEEPSEEK_API_KEY
 mvn spring-boot:run       # data/game.db is generated from schema + seed on first boot
 ```
