@@ -86,7 +86,8 @@ org.xerial:sqlite-jdbc                                    ← 必须够新，窗
 ```
 
 为什么是 D 而不是两段式（C）或框架原生 resume（F）：
-- **F 被已确认的缺陷挡在门外**：#3096（批准的运行执行完工具后丢掉结果）的修复 PR #3100 在 2026-09-11 才合入 main，**2.0.3 拿不到**；#3104（被拒的调用不吐 tool-result）同样未发版。加上 #3315/#3294/#3320/#2773 四个仍 open。D 完全不进 resume 这条路径。
+- **F 被一个已复现的缺陷挡在门外**：#3096 —— **但丢的是给前端的事件流，不是给模型的上下文**（这个差别是 2026-10-01 的 throwaway 实验测出来的，见 `docs/hitl-pause-resume-experiment.md`；此前本节把它写成"批准的运行执行完工具后丢掉结果"，是转述失真，已纠）。2.0.3 上批准后工具会执行、结果会进第二次模型调用，可 `TOOL_CALL_END`/`TOOL_CALL_RESULT` 一条都不发（`AguiStreamContext` 每 run 新建，结果事件被 `startedToolCalls` 门禁吃掉）。我们的演示页按事件流渲染，所以这条仍然足以否掉 F。修复 PR #3100 在 2026-09-11 合入 main，**至今未发版**（`v2.0.3` 仍是最新 tag）；#3104（被拒的调用不吐 tool-result）同样未发版。加上 #3315/#3294/#3320/#2773 四个仍 open。D 完全不进 resume 这条路径。
+- **实验的另一笔收益**：框架的 AG-UI resume 原生支持 `editedArgs`（整体替换工具入参，实测工具与模型看到的都是改后那条），也就是"人改写 SQL"这件事框架本来就有对等实现 —— 我们自己在确认门里做的那份不是必需品，等 #3100 发版后迁移有依据。
 - **C 会掏空学习目标①**：schema 全量进 prompt 之后，两段式的第一段不需要调任何工具，"agent"退化成一发带 JSON 约束的调用加 Java 胶水。上一轮为了补救曾打算加 `list_tables`/`describe_table` 强行制造调用需求 —— 那是为架构自洽而花 token 的假需求，D 让它没必要存在。
 - 代价已知并接受：D 走的是 WebFlux 上最难的一条线（等人类点击的长挂起流）。需要独立线程池 / `Sinks` 之类的机制，**SQL 执行与等人都不许跑在事件循环线程上**；`run-timeout` 必须调大。响应式是你（Q43=②"见过但没写过"）为此多学的一样东西，不在 §1 三项验收里，账记在 §11。
 
@@ -251,6 +252,7 @@ pom.xml
 LICENSE            ← Apache-2.0 原文（apache.org 拉取）
 README.md / README.en.md   ← 中文主文档 + 精简英文（§2 第 5 条：英文只留 quickstart 与结果，不做双语同步）
 docs/demo.gif      ← 由 tools/record_demo.py 真截图生成，进仓库（README 首屏）
+docs/hitl-pause-resume-experiment.md ← #3096 的 throwaway 结论文档（两层实测 + 机制 + 上游动作），对应两个 probe 测试类
 .github/workflows/ci.yml   ← 只跑离线用例、不注入 key（写了还没被 GitHub 执行过，见 §2 对表）
 src/main/java/...
   ├─ agent/ModelConfig       ← 启动 fail-fast：model 名非空且 != gpt-4.1-mini 且 key 非空，任一不满足则 Model bean 建立失败、进程拒绝启动。**联网探活不在启动路径里**（否则 §10 的 CI 不持 key 与 @SpringBootTest 一起破），由 `DeepSeekModelSmokeTest` 承担
@@ -311,6 +313,7 @@ tools/
 > **进度（2026-10-01 W3-a）**：✅ AG-UI 页面接线并在浏览器里真跑通（端口 18081、真 key、`human` 确认模式）。抄官方 `examples/agui` 的 `index.html` + `js/agui-client.js`（Apache 头原样保留），删掉官方那套前端工具 `request_approval` + interrupt/resume（§4 选 D 的理由不变），换成我们自己的确认卡片走 `GET /api/confirm/stream`；页面加载先拉 `GET /api/confirm/pending` 补"比页面早出现的待确认项"。`AgentConfig` 不再暴露 `ReActAgent` 单例 bean，改注册 factory —— 于是 §8 从"自存"翻成"用框架"（推导与实测见 §8）。浏览器验到的是：工具事件流、确认卡片里可编辑的 SQL、同意→61、拒绝→模型明说没拿到数、人改 `>3`→`>5`→执行返回 8（同时暴露"答复抄回原 SQL"的缺陷，见 §4）、追问指代继承、`sqlite_master` 的护栏拒绝不出卡片。79 条离线用例全绿（新增 7 条：AG-UI 配置绑定、路由存在、页面可发、pending 端点、`resolveAgent` 同 threadId 同实例/异 threadId 异实例、registry 持有 factory、无共享 `ReActAgent` bean）。**§2 验收项 3（GIF 里"人编辑 SQL 后执行"那一帧）仍未做，README 未写。**
 > **进度（2026-10-01 W3-b）**：✅ "人改过 SQL、答复抄原文"缺陷修掉了，走的是 prompt 硬规则（§4 末有修复实测）。同轮**顺带修了评分器第三个 bug**（宽松口径分母被 subset 顶掉，见 §7）—— 它不影响 88%/92% 那三行的结论，但影响任何要进 README 的第二个数字。第四轮 `--eval`（新 prompt）严格 84% / 宽松 88%，翻脸集合 A03↓ B04↑，按 §7 纪律不作为变差的证据。83 条离线用例全绿（新增 4 条：prompt 复述规则锚点 1 条 + `EvalCommandSummaryTest` 3 条），1 条 skip = 无 key 的 smoke。W2/W3 剩余：GIF、中英 README、#3096 的 throwaway 实验、§13 你那三票（B07 在排队）。
 > **进度（2026-10-01 W3-c）**：✅ §2 五条验收**逐条对表完成**（对表结果与两条诚实缺口写在 §2 末）。产出：`docs/demo.gif`（真截图四帧，含"人改 `> 3` → `> 5`"那一帧，由 `tools/record_demo.py` 生成）、`README.md`（中文主）+ `README.en.md`（只 quickstart 与结果两节）、`LICENSE`（Apache-2.0 原文）、`.github/workflows/ci.yml`（**从未被 GitHub 执行过**，仓库无 remote）。清掉了本机一份陈旧的 `data/game.db`（9-30 生成的，已被 gitignore）来实测"删库→重建→起服务→`GET / 200`"，实测数字进 §2 对表。W3 剩余：模型 ID 那条 issue、#3096 实验、README 的 GIF 若你要换真人录屏。
+> **进度（2026-10-01 W2-x，#3096 的半天 throwaway 结案）**：✅ 两层都测完了，承载在两条**离线的、进仓库的**断言上（`hitl/FrameworkPauseResumeProbeTest`、`hitl/AguiPauseResumeProbeTest`，脚本模型 + 占位 key，一次网络不打），结论文档 `docs/hitl-pause-resume-experiment.md`。三件事实：① **core 层手写的 pause/resume 在 2.0.3 是好的** —— 批准后工具执行 1 次、结果进第二次模型调用（`enablePendingToolRecovery` 开关不影响）；② 之前"丢结果"的说法**对象搞错了**：AG-UI 层丢的是 `TOOL_CALL_RESULT`/`TOOL_CALL_END` **事件**（`AguiStreamContext` 每 run 新建 + `startedToolCalls` 门禁），模型上下文不缺 —— 与上游 #3096 正文完全一致，我们在 2.0.3 复现了它；③ 框架原生 resume 支持 `editedArgs` 整体替换入参（实测工具与模型都只看见改后的值）。**不发新 issue**（#3096 已 closed、修复 PR #3100 已合 main、`v2.0.3` 仍是最新 tag = 未发版），改为准备了一条复现确认评论 + 一条相邻坑（自建 `ToolUseBlock` 恢复时框架校验的是 `getContent()` 原始 JSON，不是 `getInput()` 映射，缺它会长得一模一样像 #3096）。**§4 决定 D 维持，但理由换成"事件流丢、演示页按事件流渲染"**。86 条离线用例全绿（1 skip = 无 key 的 smoke）。W2/W3 只剩：模型 ID 那条 issue、§13 你那三票（B07 在排队）、（可选）招牌题 #26。
 **每周留一天不发功能**（W1 因 Boot 4 额外吃半天，这条从可选变成必须）。
 
 **版本窗口**：锁 2.0.3；**唯一例外** —— 若 2.0.4 在 W1 结束前**正式打 tag**（不是 README 提到），给半天跑全绿回归后升一次，此后不再升。理由：你需要的那两个修复只在 2.0.4，而 pin SNAPSHOT 期间的任意提交会直接毁掉 §2 的"10 分钟复现"。
@@ -385,6 +388,6 @@ tools/
 
 - 框架：`github.com/agentscope-ai/agentscope-java`（tag `v2.0.3`）、`java.agentscope.io` v2 en/zh 文档、repo1.maven.org 目录列举。
 - 关键结论：2.0.3 是真实 GA 版本线（2.0.0 GA 2026-07-10 → 2.0.3 2026-09-07）；`agentscope-extensions-judge` **不存在**（评测得自己写）；**不存在** `agentscope-extensions-model-deepseek`（DeepSeek 藏在 model-openai 里，SPI 注册）；AG-UI 两个 artifact **不含任何前端资源**；无独立 deepseek 模块；`mcp-nacos`/`a2a-nacos-spring-boot-starter` 只到 1.0.3（2.0 断档）。
-- 缺陷：#3315/#3294/#3320/#2773/#3369/#3291（HITL 与权限）、#3096+#3100/#3104（已修未发版）、#2696/#2548/#3301（结构化输出）、#3353/#3209/#3057（工具调用）。
+- 缺陷：#3315/#3294/#3320/#2773/#3369/#3291（HITL 与权限）、**#3096 已在 2.0.3 本地复现**（丢的是 resume run 的 `TOOL_CALL_RESULT`/`TOOL_CALL_END` 事件，不是模型上下文；复现断言 + 机制见 `docs/hitl-pause-resume-experiment.md`），修复 PR #3100 已合 main 但**未发版**（`v2.0.3` 仍是最新 tag，2026-10-01 用 GitHub API 核过）、#3104 同样未发版、#2696/#2548/#3301（结构化输出）、#3353/#3209/#3057（工具调用）。
 - 模型：`api-docs.deepseek.com`（模型枚举、定价、限流 2500/500、tool_calls 约束）。
 - 已废弃并从计划中删除：Agnes 网关（`api.agnes.ai` NXDOMAIN；`qwen3-coder-plus` 不在其模型列表；免费档可能用输入做训练数据；约 20 RPM 上限）。

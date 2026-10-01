@@ -28,7 +28,7 @@ mvn spring-boot:run         # 依赖已缓存时，到 Started App 约 10 秒；
 
 打开 <http://localhost:8080> 就是上面那个页面（端口被占就加 `-Dspring-boot.run.jvmArguments="-Dserver.port=18086"`）。想换库里的"今天"（相对时间题的锚点）用 `--game.agent.today=2026-01-31`；想重建数据库用 `--game.db.reset=true`。
 
-**没有 key 也能验证一大半**：`mvn test` 有 83 条用例，其中 82 条纯离线（护栏、建库、确认门的 approve/edit/deny/超时、prompt 内容、AG-UI 路由与会话隔离、评测判分算术），剩下 1 条是需要 key 的探活、无 key 时自动 skip。key 只从环境变量进，`.env` 已 gitignore，git 历史里不会出现明文。
+**没有 key 也能验证一大半**：`mvn test` 有 86 条用例，其中 85 条纯离线（护栏、建库、确认门的 approve/edit/deny/超时、prompt 内容、AG-UI 路由与会话隔离、评测判分算术、框架 pause/resume 的两层探针），剩下 1 条是需要 key 的探活、无 key 时自动 skip。key 只从环境变量进，`.env` 已 gitignore，git 历史里不会出现明文。
 
 ## 准确率
 
@@ -75,7 +75,7 @@ src/main/java/.../
 
 ## 已知问题（照直说）
 
-- **AgentScope 2.0.3 的原生 HITL resume 有 bug**（#3096：批准后的 run 丢工具结果；#3104），修复只在未发版的 main 上。所以确认门做在工具内部，绕开而不是等上游。
+- **AgentScope 2.0.3 的原生 HITL resume 在 AG-UI 层丢事件**（上游 #3096，已在本地复现）：批准之后工具**会**执行、结果**会**进第二次模型调用，但 `TOOL_CALL_RESULT`/`TOOL_CALL_END` 一条都不发到 SSE 流上（stream context 每个 run 新建），按事件流渲染的前端会一直等不到结果。修复 PR #3100 已合入 main，至今未发版。实测、机制与可迁移条件写在 [`docs/hitl-pause-resume-experiment.md`](docs/hitl-pause-resume-experiment.md)；本项目把确认门做在工具内部，工具调用与结果发生在同一个 run 里，所以不受这条影响。
 - **DeepSeek 不支持 `response_format: json_schema`**（官方端点实测 400），所以本项目不依赖框架的结构化输出。
 - **页面不渲染 Markdown**（GIF 里能看到 `**` 和 ``` 原样），因为演示页抄的是官方 `examples/agui` 的极简实现。
 - **`.github/workflows/ci.yml` 还没被真正执行过**——本仓库尚未推到远端。它按"CI 不持 key"的约束写，只该跑离线用例。
