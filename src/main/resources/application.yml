@@ -1,6 +1,12 @@
 spring:
   application:
     name: game-nl2sql
+  config:
+    # README 让人 `cp .env.example .env`，所以必须真有人读它 —— Spring Boot 不自动读 .env。
+    # optional: 是没有这个文件就照常启动（CI 与"只导出环境变量"的用法都走这条）。
+    # [.properties] 是 ConfigData 的后缀技巧：把任意文件按 KEY=VALUE 的 properties 解析。
+    # 优先级低于真实环境变量（见 EnvFileImportTest），所以 export 出来的 key 仍然覆盖 .env。
+    import: optional:file:./.env[.properties]
 
 agentscope:
   openai:

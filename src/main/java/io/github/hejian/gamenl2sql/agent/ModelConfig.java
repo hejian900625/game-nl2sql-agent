@@ -33,7 +33,8 @@ public class ModelConfig {
                     "game.model.name 仍是 openai starter 的默认值 " + STARTER_DEFAULT + "，启动即拒绝。");
         }
         if (props.apiKey() == null || props.apiKey().isBlank()) {
-            throw new IllegalStateException("DEEPSEEK_API_KEY 未设置。key 只走环境变量，见 .env.example。");
+            throw new IllegalStateException(
+                    "DEEPSEEK_API_KEY 未设置。写在项目根的 .env 里（复制 .env.example），或直接导出为环境变量。");
         }
 
         Model model = ModelRegistry.resolve("deepseek:" + props.name(),
