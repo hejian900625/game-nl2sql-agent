@@ -23,7 +23,7 @@ mvn spring-boot:run       # data/game.db is generated from schema + seed on firs
 
 Open <http://localhost:8080>.
 
-Without an API key you still get 82 of the 83 tests (`mvn test`): guardrail, database build, approve/edit/deny/timeout paths, prompt content, AG-UI routing and thread-session isolation, eval scoring arithmetic.
+Without an API key you still get 87 of the 88 tests (`mvn test`): guardrail, database build, approve/edit/deny/timeout paths, prompt content, AG-UI routing and thread-session isolation, eval scoring arithmetic, the two-layer probe of the framework's native pause/resume (#3096), and the measured DeepSeek model-id / context-window facts.
 
 ## Accuracy
 

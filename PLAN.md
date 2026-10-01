@@ -61,7 +61,8 @@ org.xerial:sqlite-jdbc                                    ← 必须够新，窗
 **配置面（已核实）**
 - SPI 路径：环境变量 `DEEPSEEK_API_KEY`，provider key `deepseek`，base 自动 `https://api.deepseek.com`；`DeepSeekModelProvider` **不给默认模型名**（剥掉 `deepseek:` 前缀原样转发）。
 - **2026-09-30 反编译补全（决定 W1 用哪条路）**：`agentscope-extensions-model-openai` 内嵌 `compat/deepseek/DeepSeekModelProvider`（`META-INF/services` 注册，`providerId=deepseek`，匹配 `deepseek:.+`）。`ModelRegistry.resolve("deepseek:deepseek-flash", ctx)` 会自动做四件 starter 路径**不做**的事：① 装 `DeepSeekFormatter`（处理"末条是 assistant 时补空 user"这类 DeepSeek 特有请求修正——多轮追问 5 题会踩）；② `nativeStructuredOutput(false)`（与 Day-0 实测的 `json_schema` 被拒一致）；③ 按 `ctx.enableThinking` 发 `{"thinking":{"type":"enabled|disabled"}}`，这就是 §4"思考档默认关"的现成开关；④ key 缺省回落读 `DEEPSEEK_API_KEY`。
-  ⚠️ 代价：`ModelContextWindows.DEEPSEEK` 只登记了 `deepseek-v4-flash` / `deepseek-v4-pro`，**没有 `deepseek-flash`** → 实测 `model.getContextWindowSize()` 返回 **0**。框架若有按窗口做裁剪/压缩的逻辑，0 的语义要在 W1 第一天查清。
+  ⚠️ 代价：`ModelContextWindows.DEEPSEEK` 只登记了 `deepseek-v4-flash` / `deepseek-v4-pro`（都是**旧命名**），**没有当前唯一的 flash 正式名 `deepseek-flash`** → 实测 `model.getContextWindowSize()` 返回 **0**（2026-10-01 离线复测，`agent/DeepSeekModelIdFactsTest`）。
+  **0 的语义已查清（回答上一版的待查项）**：扫过全部 agentscope jar 的字节码，`getContextWindowSize()` 的调用方只有 `Model` 接口默认方法、`ChatModelBase`、`ReActAgent$2`（委托包装）和 `extensions/aistio` 的 `AgentScopeAdapter` 四处，**内核没有任何按窗口裁剪/压缩的路径读它** → 2.0.3 上 0 是纯展示值（进启动日志），不影响我们的请求。危害在下游与将来：谁按它做上下文预算，谁就把 1M 的模型当成 0。附带一个方向相反的事实：**`deepseek-v4-flash` 在 DeepSeek 官方仍被接受**（HTTP 200，服务端按 `deepseek-flash` 处理，见 §10 W3-d）——所以"名字对不上"这件事是**正确名拿 0、旧别名拿 1000000**，不是"正确名会报错"。
   **结论（W1 第一个动作）**：Model bean 走 SPI（`ModelRegistry.resolve("deepseek:" + modelId, ctx{enableThinking=false, stream=…})`），openai starter 那条路用 `agentscope.openai.enabled: false` 关掉；`agentscope-spring-boot-starter` 仍然保留（agent/toolkit/memory 三个 bean 靠它，且 agent 是 `@ConditionalOnBean(Model)`，我们自己提供的 Model 满足条件）。骨架当时用的是 starter 路径，**是错的默认值 —— 2026-09-30 W1-a 已改掉，见 §10 W1 进度**。
 - Starter 路径：`agentscope.model.provider: openai` + `agentscope.openai.{enabled,api-key,model-name,base-url,endpoint-path,stream}`。
   ⚠️ **`model-name` 的默认值是 `gpt-4.1-mini`** → §9 的启动 fail-fast 专门挡它。
@@ -253,6 +254,7 @@ LICENSE            ← Apache-2.0 原文（apache.org 拉取）
 README.md / README.en.md   ← 中文主文档 + 精简英文（§2 第 5 条：英文只留 quickstart 与结果，不做双语同步）
 docs/demo.gif      ← 由 tools/record_demo.py 真截图生成，进仓库（README 首屏）
 docs/hitl-pause-resume-experiment.md ← #3096 的 throwaway 结论文档（两层实测 + 机制 + 上游动作），对应两个 probe 测试类
+docs/upstream-deepseek-model-ids.md  ← DeepSeek 模型 ID 的上游 note（可复跑 curl + `ModelContextWindows` 实测表 + 英文 issue 草稿），对应 `agent/DeepSeekModelIdFactsTest` 的守夜断言
 .github/workflows/ci.yml   ← 只跑离线用例、不注入 key（写了还没被 GitHub 执行过，见 §2 对表）
 src/main/java/...
   ├─ agent/ModelConfig       ← 启动 fail-fast：model 名非空且 != gpt-4.1-mini 且 key 非空，任一不满足则 Model bean 建立失败、进程拒绝启动。**联网探活不在启动路径里**（否则 §10 的 CI 不持 key 与 @SpringBootTest 一起破），由 `DeepSeekModelSmokeTest` 承担
@@ -283,8 +285,9 @@ tools/
 
 **Day-0（约 3 小时，全是"证伪前提"）** —— 四件全绿才许进 W1。**2026-09-30 四件全绿，Day-0 关闭**：
 1. ✅ DeepSeek 官方域名最小 tool call 成功（个人 key，已存 `.env`，git 已 ignore）。
-2. ✅ **模型 ID 实测**：`GET /models` 只返回两个 —— `deepseek-flash`（显示名 DeepSeek-V4.1-Flash）与 `deepseek-v4-pro`。**AgentScope 文档示例里的 `deepseek-v4-flash` 不存在**，照抄会 400。两者 context 1M、max output 393216、默认 effort=high。
-   > **根因（门禁④ 反编译时找到）**：`deepseek-v4-flash` 不是文档笔误，是框架 `ModelContextWindows.DEEPSEEK` 表里的硬编码键 —— 那份表停在旧命名，而 `deepseek-flash` 反而不在表里。这是上游可提的 issue（§10 W3 那条一并带上）。
+2. ✅ **模型 ID 实测（2026-10-01 复测，并纠了本条原先的一句话）**：`GET /models` 只返回两个正式名 —— `deepseek-flash`（显示名 DeepSeek-V4.1-Flash）与 `deepseek-v4-pro`（显示名 DeepSeek-V4-Pro），两者 `context_window` **1048576**、max output 393216、默认 effort=high；传不认识的 id 会得到信息充足的 400（"The supported API model names are deepseek-flash, deepseek-v4-pro, but you passed …"）。
+   **本条原先写的"`deepseek-v4-flash` 不存在、照抄会 400"已被证伪**：2026-10-01 用纯 ASCII 请求体复测，它返回 **HTTP 200**，服务端把它当 `deepseek-flash` 的**别名**。误判的直接原因是我自己的探针：Git Bash 把 curl 体内的中文按 GBK 写坏，DeepSeek 回的是坏字节类的 400，被我读成了"模型名不存在"。
+   > **根因（门禁④ 反编译时找到，2026-10-01 补上后果）**：框架 `ModelContextWindows.DEEPSEEK` 表停在旧命名（只登记 `deepseek-v4-flash` / `deepseek-v4-pro`），`deepseek-flash` 反而不在表里 → **正式名 `getContextWindowSize()` 得 0，旧别名得 1000000**。0 的影响面见 §3；上游 note + 英文 issue 草稿见 `docs/upstream-deepseek-model-ids.md`。
 3. ✅ 结构化输出：**不可用**（见 §4"形状约束"）。
 4. ✅ **Boot 空壳 + agent bean 注册（2026-09-30 跑通，四件全绿，可进 W1）**：
    - `mvn -B test` → `AgentBeanRegistrationTest` 绿：`openAIChatModel`(`OpenAIChatModel`)、`agentscopeReActAgent`(`ReActAgent`)、`Toolkit`、`InMemoryMemory` 四个 bean 全部注册。
@@ -313,7 +316,8 @@ tools/
 > **进度（2026-10-01 W3-a）**：✅ AG-UI 页面接线并在浏览器里真跑通（端口 18081、真 key、`human` 确认模式）。抄官方 `examples/agui` 的 `index.html` + `js/agui-client.js`（Apache 头原样保留），删掉官方那套前端工具 `request_approval` + interrupt/resume（§4 选 D 的理由不变），换成我们自己的确认卡片走 `GET /api/confirm/stream`；页面加载先拉 `GET /api/confirm/pending` 补"比页面早出现的待确认项"。`AgentConfig` 不再暴露 `ReActAgent` 单例 bean，改注册 factory —— 于是 §8 从"自存"翻成"用框架"（推导与实测见 §8）。浏览器验到的是：工具事件流、确认卡片里可编辑的 SQL、同意→61、拒绝→模型明说没拿到数、人改 `>3`→`>5`→执行返回 8（同时暴露"答复抄回原 SQL"的缺陷，见 §4）、追问指代继承、`sqlite_master` 的护栏拒绝不出卡片。79 条离线用例全绿（新增 7 条：AG-UI 配置绑定、路由存在、页面可发、pending 端点、`resolveAgent` 同 threadId 同实例/异 threadId 异实例、registry 持有 factory、无共享 `ReActAgent` bean）。**§2 验收项 3（GIF 里"人编辑 SQL 后执行"那一帧）仍未做，README 未写。**
 > **进度（2026-10-01 W3-b）**：✅ "人改过 SQL、答复抄原文"缺陷修掉了，走的是 prompt 硬规则（§4 末有修复实测）。同轮**顺带修了评分器第三个 bug**（宽松口径分母被 subset 顶掉，见 §7）—— 它不影响 88%/92% 那三行的结论，但影响任何要进 README 的第二个数字。第四轮 `--eval`（新 prompt）严格 84% / 宽松 88%，翻脸集合 A03↓ B04↑，按 §7 纪律不作为变差的证据。83 条离线用例全绿（新增 4 条：prompt 复述规则锚点 1 条 + `EvalCommandSummaryTest` 3 条），1 条 skip = 无 key 的 smoke。W2/W3 剩余：GIF、中英 README、#3096 的 throwaway 实验、§13 你那三票（B07 在排队）。
 > **进度（2026-10-01 W3-c）**：✅ §2 五条验收**逐条对表完成**（对表结果与两条诚实缺口写在 §2 末）。产出：`docs/demo.gif`（真截图四帧，含"人改 `> 3` → `> 5`"那一帧，由 `tools/record_demo.py` 生成）、`README.md`（中文主）+ `README.en.md`（只 quickstart 与结果两节）、`LICENSE`（Apache-2.0 原文）、`.github/workflows/ci.yml`（**从未被 GitHub 执行过**，仓库无 remote）。清掉了本机一份陈旧的 `data/game.db`（9-30 生成的，已被 gitignore）来实测"删库→重建→起服务→`GET / 200`"，实测数字进 §2 对表。W3 剩余：模型 ID 那条 issue、#3096 实验、README 的 GIF 若你要换真人录屏。
-> **进度（2026-10-01 W2-x，#3096 的半天 throwaway 结案）**：✅ 两层都测完了，承载在两条**离线的、进仓库的**断言上（`hitl/FrameworkPauseResumeProbeTest`、`hitl/AguiPauseResumeProbeTest`，脚本模型 + 占位 key，一次网络不打），结论文档 `docs/hitl-pause-resume-experiment.md`。三件事实：① **core 层手写的 pause/resume 在 2.0.3 是好的** —— 批准后工具执行 1 次、结果进第二次模型调用（`enablePendingToolRecovery` 开关不影响）；② 之前"丢结果"的说法**对象搞错了**：AG-UI 层丢的是 `TOOL_CALL_RESULT`/`TOOL_CALL_END` **事件**（`AguiStreamContext` 每 run 新建 + `startedToolCalls` 门禁），模型上下文不缺 —— 与上游 #3096 正文完全一致，我们在 2.0.3 复现了它；③ 框架原生 resume 支持 `editedArgs` 整体替换入参（实测工具与模型都只看见改后的值）。**不发新 issue**（#3096 已 closed、修复 PR #3100 已合 main、`v2.0.3` 仍是最新 tag = 未发版），改为准备了一条复现确认评论 + 一条相邻坑（自建 `ToolUseBlock` 恢复时框架校验的是 `getContent()` 原始 JSON，不是 `getInput()` 映射，缺它会长得一模一样像 #3096）。**§4 决定 D 维持，但理由换成"事件流丢、演示页按事件流渲染"**。86 条离线用例全绿（1 skip = 无 key 的 smoke）。W2/W3 只剩：模型 ID 那条 issue、§13 你那三票（B07 在排队）、（可选）招牌题 #26。
+> **进度（2026-10-01 W2-x，#3096 的半天 throwaway 结案）**：✅ 两层都测完了，承载在两条**离线的、进仓库的**断言上（`hitl/FrameworkPauseResumeProbeTest`、`hitl/AguiPauseResumeProbeTest`，脚本模型 + 占位 key，一次网络不打），结论文档 `docs/hitl-pause-resume-experiment.md`。三件事实：① **core 层手写的 pause/resume 在 2.0.3 是好的** —— 批准后工具执行 1 次、结果进第二次模型调用（`enablePendingToolRecovery` 开关不影响）；② 之前"丢结果"的说法**对象搞错了**：AG-UI 层丢的是 `TOOL_CALL_RESULT`/`TOOL_CALL_END` **事件**（`AguiStreamContext` 每 run 新建 + `startedToolCalls` 门禁），模型上下文不缺 —— 与上游 #3096 正文完全一致，我们在 2.0.3 复现了它；③ 框架原生 resume 支持 `editedArgs` 整体替换入参（实测工具与模型都只看见改后的值）。**不发新 issue**（#3096 已 closed、修复 PR #3100 已合 main、`v2.0.3` 仍是最新 tag = 未发版），改为准备了一条复现确认评论 + 一条相邻坑（自建 `ToolUseBlock` 恢复时框架校验的是 `getContent()` 原始 JSON，不是 `getInput()` 映射，缺它会长得一模一样像 #3096）。**§4 决定 D 维持，但理由换成"事件流丢、演示页按事件流渲染"**。86 条离线用例全绿（1 skip = 无 key 的 smoke）。
+> **进度（2026-10-01 W3-d，模型 ID 那条上游 note）**：✅ 测完并写好 note，**issue 没发**（要他点头，且本仓库无 remote、`gh` 未登录）。两个实测事实：① 服务商侧 —— 官方 `/models` 只有 `deepseek-flash` / `deepseek-v4-pro`（`context_window` 各 1048576），但 `deepseek-v4-flash` **也在 200**（服务端当别名），所以 §10 门禁② 那句"照抄会 400"是错的，已按实测改写（错因见那条）；② 框架侧 —— `ModelContextWindows.DEEPSEEK` 缺 `deepseek-flash`，`ModelRegistry.resolve("deepseek:deepseek-flash", …).getContextWindowSize()` 实测 **0**（旧别名 1000000、已退役的 `deepseek-reasoner` 也是 0）——那份表就是他们文档示例里出现 `deepseek-v4-flash` 的最可能来源（**推断，未证实**：没有提交记录或说明能证明文档是从这张表抄的，两者只是同源于一批旧命名）。影响面扫了全部 jar 的字节码：内核无人读这个值，所以 0 今天只是启动日志里的一个展示值（§3）。产出：`docs/upstream-deepseek-model-ids.md`（可复跑的 curl + 四行实测表 + 修复建议 + 英文 issue 草稿 + 去重证据）和 `agent/DeepSeekModelIdFactsTest`（2 条**离线守夜断言**：上游补表后 `window("deepseek-flash")` 会自己变红，等于把"何时可以删掉这段 workaround"编进了测试）。88 条离线用例全绿（1 skip = 无 key 的 smoke）。**W2/W3 我这边能单推的工程项至此全部做完**，剩下的都不是我一个人能推进的 —— 待办与缺口统一收在 §15。
 **每周留一天不发功能**（W1 因 Boot 4 额外吃半天，这条从可选变成必须）。
 
 **版本窗口**：锁 2.0.3；**唯一例外** —— 若 2.0.4 在 W1 结束前**正式打 tag**（不是 README 提到），给半天跑全绿回归后升一次，此后不再升。理由：你需要的那两个修复只在 2.0.4，而 pin SNAPSHOT 期间的任意提交会直接毁掉 §2 的"10 分钟复现"。
@@ -390,4 +394,36 @@ tools/
 - 关键结论：2.0.3 是真实 GA 版本线（2.0.0 GA 2026-07-10 → 2.0.3 2026-09-07）；`agentscope-extensions-judge` **不存在**（评测得自己写）；**不存在** `agentscope-extensions-model-deepseek`（DeepSeek 藏在 model-openai 里，SPI 注册）；AG-UI 两个 artifact **不含任何前端资源**；无独立 deepseek 模块；`mcp-nacos`/`a2a-nacos-spring-boot-starter` 只到 1.0.3（2.0 断档）。
 - 缺陷：#3315/#3294/#3320/#2773/#3369/#3291（HITL 与权限）、**#3096 已在 2.0.3 本地复现**（丢的是 resume run 的 `TOOL_CALL_RESULT`/`TOOL_CALL_END` 事件，不是模型上下文；复现断言 + 机制见 `docs/hitl-pause-resume-experiment.md`），修复 PR #3100 已合 main 但**未发版**（`v2.0.3` 仍是最新 tag，2026-10-01 用 GitHub API 核过）、#3104 同样未发版、#2696/#2548/#3301（结构化输出）、#3353/#3209/#3057（工具调用）。
 - 模型：`api-docs.deepseek.com`（模型枚举、定价、限流 2500/500、tool_calls 约束）。
+- 模型 ID 与框架窗口表（2026-10-01 复测，全部可重跑）：官方 `GET /models` = `deepseek-flash` / `deepseek-v4-pro`（`context_window` 1048576）；`deepseek-v4-flash` 是**别名**而非死名（200，回填 `deepseek-flash`）；`ModelContextWindows.DEEPSEEK` = `{deepseek-v4-flash, deepseek-v4-pro}`，正式名 `getContextWindowSize()` 实测 0；扫全部 `io.agentscope` 2.0.3 jar：`getContextWindowSize` 的引用方只有 `Model`/`ChatModelBase`/`ReActAgent$2`/`extensions-aistio` 四处。承载：`agent/DeepSeekModelIdFactsTest`（离线守夜）+ `docs/upstream-deepseek-model-ids.md`（含英文 issue 草稿，**未发**）。
 - 已废弃并从计划中删除：Agnes 网关（`api.agnes.ai` NXDOMAIN；`qwen3-coder-plus` 不在其模型列表；免费档可能用输入做训练数据；约 20 RPM 上限）。
+
+## 15. 当前待办与缺口（2026-10-01 收口）
+
+这一节是**唯一汇总**。§10 各条进度里写的"剩余"只是当时的快照，与本节冲突时以本节为准。
+
+### 15.1 需要你点头或你亲手做的（我不会单推的四件）
+
+1. **§13 的三次否决**（换题 / 改口径 / 招牌题进门）。当前状态：**B07 在排队** —— 它三轮换了三种错法，而根子在题目本身：题面与我代笔的口径互相冲突，这种题模型没人能稳过。你一句话就能把口径变成"需求方口径"。招牌题"上周哪个区服的付费金额掉了最多，是新玩家还是老玩家掉的"**仍不在评测集里**（现有 B06/B07/T01 只是邻近，替不了它）。任一改动之后强制走 `tools/verify_eval.py build` → `check` → 重跑 `--eval`（§7 的纪律：期望值只能由脚本产生）。
+2. **推远端**。本仓库至今**没有 remote**，`git log` 里所有提交都只在本地 main。推之前要顺手定三件事：README"已知问题"里"CI 从未被执行"那句届时撤不撤、`.env` 已在 ignore（已确认）、GIF 226 KB 进不进仓库（已进）。
+3. **点头才发的两条上游动作**（草稿已写好、逐字可发，未经你点头我不发）：
+   - #3096 的**复现确认评论** + 一条相邻坑 → `docs/hitl-pause-resume-experiment.md` 末（不发新 issue：#3096 已 closed、修复只在未发版的 main）。
+   - `ModelContextWindows.DEEPSEEK` 缺正式名的**新 issue**（英文全文）→ `docs/upstream-deepseek-model-ids.md` 末（已核过无重复）。
+4. **项目收尾后轮换 DeepSeek key**：它曾被贴进过聊天窗口。仓库里从未出现明文（key 只走环境变量，`.env` 已 ignore），但聊天历史不在我的控制范围。
+
+### 15.2 等发版才能做的 —— 两件都编成了会自己变红的断言，不靠我记得
+
+| 触发条件 | 届时动作 | 哨兵 |
+|---|---|---|
+| 出现含 PR #3100 的新 tag（`v2.0.3` 之后第一个） | 把"第二次 run 不含 `TOOL_CALL_RESULT`/`TOOL_CALL_END`"两条 `noneMatch` 翻成 `anyMatch`，并重新评估 §4 决定 D 还成不成立 | `hitl/AguiPauseResumeProbeTest` |
+| 上游把 `deepseek-flash` 补进 `ModelContextWindows.DEEPSEEK` | 删掉本项目的 workaround 说明，`docs/upstream-deepseek-model-ids.md` 归档 | `agent/DeepSeekModelIdFactsTest`（现在断言"缺这个键"和"窗口为 0"，被修好即红） |
+
+### 15.3 可选（不做也不影响 §2 五条达标）
+
+- GIF 换真人录屏。现在的首屏是 `tools/record_demo.py` 用系统 Edge 截的四帧真截图拼的，§2 第 3 条已经满足，换真人录屏只是观感。
+- README 首屏补四类失败的逐题明细（现在只有计数）。
+
+### 15.4 三条诚实缺口（写在这里，别在别处替项目承诺）
+
+1. **§2 第 1 条没有陌生人体感数据**。实测过的是"我这台机器：删库 → `mvn -B spring-boot:run` → 自动建库 → `Started App in 2.192 s` → `GET / 200`"，**不是**"新人 clone 后 10 分钟跑通"。首次在线拉依赖的耗时、以及你没有响应式经验时会卡在哪一步，都没数据。README 未承诺陌生人体感，别在别处替它承诺。
+2. **`.github/workflows/ci.yml` 从未被 GitHub 执行过**（无 remote，GitHub 侧没有这个仓库）。能报的数字只有本机的 `mvn -o -B test`：**2026-10-01 复跑 88 条用例、0 failure、0 error、1 skip**（skip 是需 key 的 smoke）。这条不是"CI 已绿"，README 的"已知问题"里照直写着。
+3. **15 道业务题的口径是代笔的**（`business.json` 里 `owner: qoder`）。所以 88%/92% 测的是"模型能否在一个定义良好的库里正确取数"，**不测**"口径含糊时人会不会被误导"。题面与我写的口径冲突时以口径为准 —— B07 就是这么一道没人能稳过的题。README 的准确率表按这个措辞。
