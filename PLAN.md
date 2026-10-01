@@ -27,7 +27,7 @@
 
 > **2026-10-01 W3-c 逐条对表**
 > ① 本机实测：删掉 `data/game.db` 后 `mvn -B spring-boot:run` → `[db] 已生成 …（262 条语句，1247 ms）` → `Started App in 2.192 seconds` → `GET / 200`、`GET /api/confirm/pending → []`。**8080 被本机一个无关进程占着**（pid 5028，不动它），所以这次是在 18086 上验的，README 里给了换端口的写法。
-> ② 准确率表在两份 README 里，含严格/宽松两个口径与四类失败计数。
+> ② 准确率表在两份 README 里，含严格/宽松两个口径与四类失败计数。**W3-f 加到超出这条**：中文 README 另有逐题明细（每题的期望值、三轮各自跑出的单元格值、错在哪一句），英文 README 只补了"六个非数字终态一次没触发"这一条事实并指回中文表。
 > ③ `docs/demo.gif` 由 `tools/record_demo.py` 生成：Playwright 驱动**系统里已有的 Edge**（`channel=msedge`，headless，不下载浏览器），四帧真截图（提问 → 确认卡片 → **人把 `> 3` 改成 `> 5`** → 答复抄执行侧那条），Pillow 拼 GIF，226 KB。**不是画出来的示意图。**
 > ④ 83 条用例（82 条纯离线 + 1 条需 key 的探活自动 skip）。`.github/workflows/ci.yml` **写了但当时未被 GitHub 执行过**（仓库还没推远端）——这条在 README 的"已知问题"里照直写着，不许说成"CI 已绿"。
 > **2026-10-01 W3-e 更新：这条已经翻成事实**。仓库推到 `github.com/hejian900625/game-nl2sql-agent`（公开），Actions 真跑了两次并全绿 —— run `36824220129` 的日志里是 `Tests run: 88, Failures: 0, Errors: 0, Skipped: 1`、`BUILD SUCCESS`、15 秒。README 顶部现在有 CI 徽章（实测 `badge.svg` 返回 200）。
@@ -322,6 +322,8 @@ tools/
 > **进度（2026-10-01 W3-e，推远端）**：✅ 建仓 + 推送 + **CI 第一次真跑并全绿**。远端 `github.com/hejian900625/game-nl2sql-agent`（公开，`gh repo create --public --source=. --push`）。推之前做了秘密审计（`.env` 从未进历史、真 key 在 `git log --all -p` 里命中 0、tracked 只有占位）。两次 push 各触发一次 Actions：run `36824220129` = `Tests run: 88, Failures: 0, Errors: 0, Skipped: 1`、`BUILD SUCCESS`、15 秒 —— **§2 对表④ 与 §15.4 的第 2 条缺口由此关闭**，README 顶部加了 CI 徽章（实测 200）。README 的 `<this repo>` 占位换成真 URL，英文 README 的 quickstart 补上 `git clone` 一行（原来只有 `cp .env.example .env`，等于假设读者已经有仓库了）。
 > 一条必须记下的**自我纠正**：我先前判断"github.com 是被 DNS 污染到一个不可达 IP，需要本地 IP 钉定代理"。代理真写出来了（`research/pin-github-proxy.mjs`，gitignored，留着以防再抖），但**这次推送没用上它**：实测把"污染"这个说法打掉了 —— `140.82.112.3 / 113.3 / 116.3` 与 `20.205.243.166` 的可用性**在几分钟内互换**（同一批测试里 113.3 从 200 变 000、20.205 从 000 变 200），而 `git ls-remote` 裸跑连两次都拿到 `7fd1a60b…`。**真实情况是这台机器到 GitHub 的可达性在抖，不是一条可以钉死的坏路由。** 证据还有：本次 README 那次推送连续失败 3 次（`Failed to connect to github.com:443 after 21s`），期间我先量的 git 端点（`/info/refs?service=git-upload-pack` 返回 200）再重试就通了。结论：**网络判断要按"具体端点 + 多次采样"说，单次 `000` 不足以定机制，也别急着写代理。**
 > 同一轮把**两条上游动作也发了**（你点头之后）：#3096 的复现确认评论 + 新 issue **#3379**（`ModelContextWindows.DEEPSEEK` 缺正式名，按他们的 `bug_report.md` 模板写，含离线复现代码）。落点 URL 记在 §14 末与 §15.1 第 3 条。**注意一个记录上的坑**：真正发出的正文放在 `research/`（gitignored），仓库文档里是草稿，两者不逐字相同 —— 以后要引用以 issue 页面为准。
+> **进度（2026-10-01 W3-f，README 逐题明细）**：✅ 关掉 §15.3 里唯一我能独立做的那条。中文 README 的"四类失败"从一个计数扩成**计数 + 逐题表**：5 道失败题（B03/B04/B05/B07/A03）各列出期望值、三轮分别跑出的首行单元格、以及错在哪一句；英文 README 保持精简，只加"六个非数字终态一次没触发"这条事实并指回中文表。全部数字是从 `eval-results/*.json` 现读的（`python` 读 `verdict`/`expected`/`firstRowCells`/`toolCalls` + `business.json` 的题面/口径/`truthSql` 对照），不是从记忆里抄的 —— 中途就抓出一处记忆错：我原本要写"v2 那轮 B05 按天分组后没相除"，读 JSON 才发现它按天分组仍算了 67.50%，只是商不在单元格里（`9, 6`）。顺带把一条更硬的反证写进表前：**四份**结果 JSON（含 `eval-results/archive/` 那份换判分规则前的）的 `summary.byVerdict` 只有 `CORRECT` 与 `WRONG_NUMBER` 两个键，`NO_TOOL_CALL`/`GUARD_REJECTED`/`EXEC_ERROR`/`HUMAN_DENIED`/`UNKNOWN_RESULT`/`AGENT_ERROR` 六个终态一次没出现，所以"三轮唯一稳定失败的是 B07，且它是题目缺陷"这个说法有了分类学支撑。同轮修掉 §14 一处陈旧标记（模型 ID 那条还写着"未发"，实为 #3379 已发）。
+> **同一轮记下的两个"不动"（他的决定，别再问）**：① `~/.qoder-cn/gh-token/code.txt` 那枚明文 PAT **保留**、暂不吊销（GCM 已缓存 `git:https://github.com`，文件是冗余的第二份拷贝）；② commit author email `181013051@qq.com` 随公开仓库可被抓取，**不改**（改需重写历史 + force-push）。这两条从 §15.1 的"等他点头"里划掉，收尾时 DeepSeek key 的轮换（§15.1 #4）仍在。
 **每周留一天不发功能**（W1 因 Boot 4 额外吃半天，这条从可选变成必须）。
 
 **版本窗口**：锁 2.0.3；**唯一例外** —— 若 2.0.4 在 W1 结束前**正式打 tag**（不是 README 提到），给半天跑全绿回归后升一次，此后不再升。理由：你需要的那两个修复只在 2.0.4，而 pin SNAPSHOT 期间的任意提交会直接毁掉 §2 的"10 分钟复现"。
@@ -398,7 +400,7 @@ tools/
 - 关键结论：2.0.3 是真实 GA 版本线（2.0.0 GA 2026-07-10 → 2.0.3 2026-09-07）；`agentscope-extensions-judge` **不存在**（评测得自己写）；**不存在** `agentscope-extensions-model-deepseek`（DeepSeek 藏在 model-openai 里，SPI 注册）；AG-UI 两个 artifact **不含任何前端资源**；无独立 deepseek 模块；`mcp-nacos`/`a2a-nacos-spring-boot-starter` 只到 1.0.3（2.0 断档）。
 - 缺陷：#3315/#3294/#3320/#2773/#3369/#3291（HITL 与权限）、**#3096 已在 2.0.3 本地复现**（丢的是 resume run 的 `TOOL_CALL_RESULT`/`TOOL_CALL_END` 事件，不是模型上下文；复现断言 + 机制见 `docs/hitl-pause-resume-experiment.md`），修复 PR #3100 已合 main 但**未发版**（`v2.0.3` 仍是最新 tag，2026-10-01 用 GitHub API 核过）、#3104 同样未发版、#2696/#2548/#3301（结构化输出）、#3353/#3209/#3057（工具调用）。
 - 模型：`api-docs.deepseek.com`（模型枚举、定价、限流 2500/500、tool_calls 约束）。
-- 模型 ID 与框架窗口表（2026-10-01 复测，全部可重跑）：官方 `GET /models` = `deepseek-flash` / `deepseek-v4-pro`（`context_window` 1048576）；`deepseek-v4-flash` 是**别名**而非死名（200，回填 `deepseek-flash`）；`ModelContextWindows.DEEPSEEK` = `{deepseek-v4-flash, deepseek-v4-pro}`，正式名 `getContextWindowSize()` 实测 0；扫全部 `io.agentscope` 2.0.3 jar：`getContextWindowSize` 的引用方只有 `Model`/`ChatModelBase`/`ReActAgent$2`/`extensions-aistio` 四处。承载：`agent/DeepSeekModelIdFactsTest`（离线守夜）+ `docs/upstream-deepseek-model-ids.md`（含英文 issue 草稿，**未发**）。
+- 模型 ID 与框架窗口表（2026-10-01 复测，全部可重跑）：官方 `GET /models` = `deepseek-flash` / `deepseek-v4-pro`（`context_window` 1048576）；`deepseek-v4-flash` 是**别名**而非死名（200，回填 `deepseek-flash`）；`ModelContextWindows.DEEPSEEK` = `{deepseek-v4-flash, deepseek-v4-pro}`，正式名 `getContextWindowSize()` 实测 0；扫全部 `io.agentscope` 2.0.3 jar：`getContextWindowSize` 的引用方只有 `Model`/`ChatModelBase`/`ReActAgent$2`/`extensions-aistio` 四处。承载：`agent/DeepSeekModelIdFactsTest`（离线守夜）+ `docs/upstream-deepseek-model-ids.md`（含英文正文；**2026-10-01 已作为 agentscope-ai/agentscope-java#3379 发出**，文档里那份是草稿，逐字以 issue 页面为准）。
 - 已废弃并从计划中删除：Agnes 网关（`api.agnes.ai` NXDOMAIN；`qwen3-coder-plus` 不在其模型列表；免费档可能用输入做训练数据；约 20 RPM 上限）。
 - 对外动作的落点（2026-10-01，全部以你账号 `hejian900625` 发出，可点开复核）：仓库 <https://github.com/hejian900625/game-nl2sql-agent>（公开，`main`）；CI run `36824220129`（88 tests / 0 fail / 1 skip / `BUILD SUCCESS`）；#3096 评论 <https://github.com/agentscope-ai/agentscope-java/issues/3096#issuecomment-5925939634>；新建 issue [#3379](https://github.com/agentscope-ai/agentscope-java/issues/3379)。
 
@@ -409,7 +411,7 @@ tools/
 ### 15.1 需要你点头或你亲手做的（四件里两件已于 2026-10-01 结掉）
 
 1. **§13 的三次否决**（换题 / 改口径 / 招牌题进门）。当前状态：**B07 在排队** —— 它三轮换了三种错法，而根子在题目本身：题面与我代笔的口径互相冲突，这种题模型没人能稳过。你一句话就能把口径变成"需求方口径"。招牌题"上周哪个区服的付费金额掉了最多，是新玩家还是老玩家掉的"**仍不在评测集里**（现有 B06/B07/T01 只是邻近，替不了它）。任一改动之后强制走 `tools/verify_eval.py build` → `check` → 重跑 `--eval`（§7 的纪律：期望值只能由脚本产生）。
-2. **~~推远端~~ 已完成（2026-10-01）**：公开仓 `https://github.com/hejian900625/game-nl2sql-agent`，`main` 已推，CI 真跑全绿（见 §2 对表④）。**推之前做的秘密审计**：`.env` 从未进过任何提交；把 `.env` 里的真 key 拿去 `git log --all -p` 里数，命中 0 次；tracked 文件里只有 `${DEEPSEEK_API_KEY:}` 与 `placeholder-no-network-call` 两类占位；`research/`、`data/*.db` 未被 track。收尾还剩一笔：**吊销那枚 gh classic token**（`repo+read:org+workflow`，30 天期，存在 `~/.qoder-cn/gh-token/`，仓库外、未提交）。
+2. **~~推远端~~ 已完成（2026-10-01）**：公开仓 `https://github.com/hejian900625/game-nl2sql-agent`，`main` 已推，CI 真跑全绿（见 §2 对表④）。**推之前做的秘密审计**：`.env` 从未进过任何提交；把 `.env` 里的真 key 拿去 `git log --all -p` 里数，命中 0 次；tracked 文件里只有 `${DEEPSEEK_API_KEY:}` 与 `placeholder-no-network-call` 两类占位；`research/`、`data/*.db` 未被 track。**2026-10-01 他明确决定"不动"的两笔，别再问**：① 那枚 gh classic token（`repo+read:org+workflow`，30 天期）不吊销，明文文件 `~/.qoder-cn/gh-token/code.txt` 也不删（GCM 已缓存 `git:https://github.com`，它是冗余的第二份拷贝）；② 每个 commit 的 author email `181013051@qq.com` 随公开仓库可被抓取，不改（改需重写历史 + force-push）。收尾时只剩第 4 条的 DeepSeek key 轮换。
 3. **~~点头才发的两条上游动作~~ 已发（2026-10-01 W3-e，用你的 GitHub 账号 `hejian900625`）**：
    - #3096 的复现确认评论 → <https://github.com/agentscope-ai/agentscope-java/issues/3096#issuecomment-5925939634>（未开新 issue，理由同上；正文另带一条相邻坑：自己重建 `ToolUseBlock` 时框架校验的是 `getContent()` 原始 JSON）。
    - `ModelContextWindows.DEEPSEEK` 缺正式名的新 issue → **agentscope-ai/agentscope-java#3379**（open，标签 `bug`）：<https://github.com/agentscope-ai/agentscope-java/issues/3379>。
@@ -426,7 +428,7 @@ tools/
 ### 15.3 可选（不做也不影响 §2 五条达标）
 
 - GIF 换真人录屏。现在的首屏是 `tools/record_demo.py` 用系统 Edge 截的四帧真截图拼的，§2 第 3 条已经满足，换真人录屏只是观感。
-- README 首屏补四类失败的逐题明细（现在只有计数）。
+- ~~README 首屏补四类失败的逐题明细（现在只有计数）~~ **已做（2026-10-01 W3-f）**：中文 README 的准确率一节有 5 题 × 3 轮的明细表。
 
 ### 15.4 三条诚实缺口（写在这里，别在别处替项目承诺）
 

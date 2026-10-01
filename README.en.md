@@ -40,6 +40,8 @@ Without an API key you still get 87 of the 88 tests (`mvn test`): guardrail, dat
 
 Two v1 runs score the same 22/25 while missing *different* questions, so a single run's total proves nothing; compare which questions flipped. B07 fails every run and is a defect in the question itself (its text contradicts its own caliber declaration).
 
+All misses in all three runs are the same failure category — the query ran fine and the number was wrong (3 / 3 / 4 questions). The scorer's six other terminal verdicts (`NO_TOOL_CALL`, `GUARD_REJECTED`, `EXEC_ERROR`, `HUMAN_DENIED`, `UNKNOWN_RESULT`, `AGENT_ERROR`) never fired once: every `summary.byVerdict` in `eval-results/` contains only `CORRECT` and `WRONG_NUMBER`. [README.md](README.md) has the per-question breakdown of those misses.
+
 Reproduce:
 
 ```bash
