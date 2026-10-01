@@ -97,7 +97,9 @@ org.xerial:sqlite-jdbc                                    ← 必须够新，窗
 - **给人看的 SQL 是护栏改写后的那条**，不是模型原文 —— 实测 `login_dt='2026-01-31'` 到了确认面板变成 `login_dt = '2026-01-31' ... LIMIT 200`（解析器重排空格 + 补 LIMIT）。README 要写明"展示的 SQL 可能与模型生成的不完全一致"，否则第一次点确认的人会以为人在审模型的原话。
 - **人的编辑再进一次护栏**（`Decision.edit("drop table acct")` → 拒，且不执行）。这条是 §6"人是责任归属、不是安全机制"的直接推论，不是框架要求。
 - **超时=拒绝**，`doFinally` 清理挂起条目，事后 `decide()` 返回 false（前端拿到 410）；同一条决策点两次，第二次也 false。
+- ⚠️ **人改过 SQL 之后，模型的答复会抄回它自己的原文，不是执行的那条**（2026-10-01 浏览器实测：面板里把 `login_cnt > 3` 手改成 `> 5`，工具返回明确写着 `执行 SQL: ... login_cnt > 5 ... LIMIT 200`，返回 8；但模型正文里的"## 实际执行的 SQL"代码块仍是 `> 3`）。**没修，只是记下来**：修法要么在 prompt 里加硬规则"答复里的 SQL 必须逐字抄工具返回的 `执行 SQL` 行"，要么前端直接以工具事件为准渲染这一段、不信模型散文。选前者更贴 §6 的立场（模型负责解释口径，但数字与语句的来源必须是执行侧）。
 - **`game.confirm.mode=auto_approve` 是 §7 评测的接缝**：25 道题不可能每题手点一次，`--eval` 必须能整条链路跑完而无人值守；`ConfirmationGate` 在该模式下不入 pending 表，`AgentBeanRegistrationTest` 用默认 `human` 模式验挂起，`RunSqlToolTest` 两种模式都验。
+- **页面实测三条处置路径（2026-10-01）**：同意 → 工具结果与表格数字进答复（61）；拒绝 → 工具返回 `人拒绝执行这条 SQL：…`，模型回答"没有拿到任何数字，也不会去猜"，并且自己指出 `2026-02-01` 不在数据覆盖范围内；护栏拒绝 → **不出确认卡片**（护栏在门之前，`SqlGuard` 拒了就不会挂起等人），页面上直接是 `护栏拒绝：引用了数据库系统对象（sqlite_master）…`。⚠️ 顺带一条不好看的实情：让它写 `UPDATE` 时模型在 prompt 层就直接拒了，压根没到护栏 —— 所以"护栏挡住 DML"这条必须由 `sqlite_master`/`SqlGuardTest` 这类真会下发的语句来证，不能拿"模型拒绝了"当护栏的功劳。
 
 **schema 注入已落地（2026-09-30 W2-a，`agent/SystemPrompt` + `agent/AgentConfig`）**
 
@@ -211,11 +213,19 @@ D:/tools/apache-maven-3.9.16/bin/mvn -o -B spring-boot:run \
 
 ## 8. 会话状态
 
-**自存**：按 `threadId` 维护一个 `{lastQuestion, lastSql, 口径}` 小结构，注入下一轮 prompt。**不开** `agentscope.agui.server-side-memory`。
+**2026-10-01 改：用框架的 threadId 会话，"自存 `{lastQuestion, lastSql, 口径}`"作废。** 配置 `agentscope.agui.server-side-memory=true`，`AgentConfig` 向 AG-UI 注册表交一个 **factory**（`registry.registerFactory("default", factory::create)`），每个 threadId 由框架造一个 agent 实例并复用。
 
-理由：框架那个选项给你的是**全量消息历史**，而你要的是"只保留上一轮 SQL"——不是同一个东西。用框架实现你的目标，等于悄悄把会话形态换成被你否掉的长历史，代价是 token 上涨、指代歧义变多、**且那 5 道追问题的成绩会受历史长度干扰而不可比**。另外 #3291（builder 权限规则被快照进持久化 session）也让你不想把状态交给框架。
+三条只有读 2.0.3 字节码才知道的事实（都已转成 `AguiEndpointTest` / `AgentBeanRegistrationTest` 的断言，不靠本文措辞）：
 
-> **2026-09-30 W2-a 实测把这条从"选择"变成"唯一出路"**：2.0.3 的 `ReActAgent` 根本不引用 `io.agentscope.core.memory.*`，`server-side-memory` 那条路对应的是 `AgentStateStore`/`AgentState`（全量状态），没有"给我装一个 Memory"的入口。详见 §4 末实测清单。
+- `DefaultAgentResolver.resolveAgent(agentId, threadId, userId)` → `ThreadSessionManager.getOrCreateAgent(userId, threadId, agentId, factory)`：session key 是 **(userId, threadId)**，value 是**整个 agent 实例**。`threadSessionIsolatesThreadsAndReusesWithinOne` 钉住两面：同 threadId 两次拿到同一实例（多轮指代继承的前提），换 threadId 就是新实例（浏览器之间不串）。
+- `AguiAgentRegistry.getAgent(id)` 先查 `agentFactories`，命中就 `supplier.get()` —— 所以"每 thread 一个实例"是框架默认行为，前提是我们交出去的是 factory。**交实例（`register(id, obj)`）就等于把所有标签页接到同一份 context 上**，正是 §4 W2-b 实测到的累积 bug；`aguiRegistryHoldsAFactoryNotASharedInstance` 断言同一 id 两次 `getAgent` 必须是不同对象。
+- 注册 id 的来源：`AguiAgentAutoRegistration` 在没有 `@AguiAgentId` 时**拿 bean 名当 agentId**，而 `default-agent-id` 默认是 `default` —— 走 customizer 显式按名注册，少一层隐式约定。
+
+**浏览器实测（2026-10-01，端口 18081，真 key、human 确认模式）**：第 1 轮"1月31日登录次数超过3次的账号有多少个？"→ 确认卡片 → 同意 → 工具返回 61；同一页面追问"这些账号里渠道是 yx 的有几个？"→ 模型自己带上 `login_dt = '2026-01-31' AND login_cnt > 3` 并 JOIN `acct`。**指代继承一行代码都没写。**
+
+原决定（2026-09-30）的两条理由没有被推翻，是被**接受**：token 随历史上涨、追问题成绩受历史长度干扰。可以接受的理由是 §7 的评测不经过这条路径（`--eval` 每题走 `AgentFactory.create()`，见 §4），页面会话与评测互不污染。#3291（权限规则被快照进持久化 session）在这个形态下不构成风险：状态只在进程内存里，重启即清，我们不做持久化。
+
+> **2026-09-30 W2-a 的原结论留档**：当时认定"2.0.3 的 `ReActAgent` 没有 memory 入口，自存是唯一出路"。那句对 `ReActAgent` 本身仍然成立（它确实不接受 `memory(...)`），但结论错在把"没有 memory 入口"当成"没有会话机制"——AG-UI 这层的 `ThreadSessionManager` 是按 **agent 实例**而不是按 Memory 对象来做会话的，所以根本不需要 builder 有 memory 入口。
 
 ## 9. 工程结构
 
@@ -225,18 +235,18 @@ D:/tools/apache-maven-3.9.16/bin/mvn -o -B spring-boot:run \
 pom.xml
 src/main/java/...
   ├─ agent/ModelConfig       ← 启动 fail-fast：model 名非空且 != gpt-4.1-mini 且 key 非空，任一不满足则 Model bean 建立失败、进程拒绝启动。**联网探活不在启动路径里**（否则 §10 的 CI 不持 key 与 @SpringBootTest 一起破），由 `DeepSeekModelSmokeTest` 承担
-  ├─ agent/                  ← ReActAgent bean（AgentConfig）、系统 prompt（SystemPrompt，运行时拼 schema）
+  ├─ agent/                  ← AG-UI 注册 factory（AgentConfig）、每题现造的 AgentFactory、系统 prompt（SystemPrompt，运行时拼 schema）
   ├─ tool/                   ← run_sql
   ├─ guard/                  ← 护栏四步链（纯函数，可离线测）
   ├─ hitl/                   ← 确认门状态机 + Sinks + 超时
   ├─ db/                     ← SQLite 只读连接、schema/seed 初始化、--reset-db
   ├─ eval/                   ← --eval、断言、归因分类、结果 JSON
-  └─ web/                    ← AG-UI 之外自加的确认决策 POST 端点
+  └─ web/                    ← AG-UI 之外自加的确认端点：GET /api/confirm/stream（SSE）、GET /api/confirm/pending、POST /api/confirm/{id}
 src/main/resources/
   ├─ application.yml
   ├─ schema/  ← game DDL + seed
   ├─ eval/    ← 25 题（含口径声明）
-  └─ static/  ← 抄 examples/agui 的 index.html + agui-client.js，保留原版权头
+  └─ static/  ← 抄 examples/agui 的 index.html + agui-client.js，保留原版权头；index.html 里删掉官方那套前端工具 request_approval，换成我们自己的确认卡片（#confirm-panel）
 ```
 
 - `.gitignore`：`.env`、`*.db`、`*-wal`/`*-shm`、`target/`、IDE 目录。评测结果 JSON **不 ignore**。
@@ -271,7 +281,10 @@ src/main/resources/
 **W2**：`--eval` + 25 题 → 第一个真实准确率 → AG-UI 页面抄改 → 追问 5 题的状态传递 → **半天 throwaway 实验**：单独测框架原生 permission+resume，确认 #3096 到底在哪一层复现，**结论作为 issue 提给上游**。
 > **进度（2026-09-30 W2-a）**：✅ 带 schema 注入的正式 prompt 与自建 `ReActAgent` bean 完成（细节见 §4 末）。61 条用例全绿（1 skip = 无 key 的 smoke）。W2 剩余：`--eval` 跑手 + 结果 JSON、AG-UI 页面、追问 5 题的状态传递、#3096 的 throwaway 实验。
 > **进度（2026-10-01 W2-b）**：✅ `--eval` 跑手落地并**真跑三轮**（DeepSeek flash，`auto_approve`）。**严格口径 88% / 宽松口径 92%，§2 的 75% 门槛达成**；判分规则被实测纠了两次（first-cell 误判 B10/T01、文字做除法误判 B05），三轮唯一稳定失败的题只有 B07 一道 —— 全部细节、逐题归因与"别拿单轮总分比改进"的纪律写在 §7 末。72 条离线用例全绿（1 skip = 无 key 的 smoke），`eval-results/*.json` 三份进仓库。W2 剩余：AG-UI 页面、追问 5 题的 §8 自存状态（探活已证"同一实例跨轮"这条路本身能答对指代，剩下的是它与 §8 结构的边界以及换 threadId 怎么办）、#3096 的 throwaway 实验。
+> **进度（2026-10-01 W3-a 顺带把上面两笔清掉）**：AG-UI 页面完成；"§8 自存状态"这个任务**取消**——§8 已翻成"用框架的 ThreadSessionManager"，追问 5 题的状态传递由 threadId 会话直接提供（浏览器实测见 §8）。W2 只剩 #3096 的 throwaway 实验。
 **W3**：README（中英）+ GIF + 准确率表 → 模型 ID 那条 issue → 收尾。
+> **进度（2026-10-01 W3-0）**：✅ 本地仓库补全。离线构建此前炸在 `PluginResolutionException`，**根因不是 jar 没下过**：`~/.m2` 里的 plugin pom 打着旧仓库 id `aliyunmaven`，而 settings.xml 的 mirror id 是 `aliyun-public`，离线模式就不敢信本地已有文件；联网跑一遍重新盖章即解决。同时把 `agentscope-agui-spring-boot-starter` / `agentscope-extensions-agui` 2.0.3 及它们在 Boot 4.0.4 版本管理下的完整传递闭包灌进本地仓库（做法：仓库外放一个与本项目 pom 同构 + 这两个依赖的探针 pom，`mvn dependency:go-offline`，验完删）。验证：`mvn -o -B clean test` 72 绿、`mvn -o -B clean package` 含 `spring-boot:repackage` 成功。
+> **进度（2026-10-01 W3-a）**：✅ AG-UI 页面接线并在浏览器里真跑通（端口 18081、真 key、`human` 确认模式）。抄官方 `examples/agui` 的 `index.html` + `js/agui-client.js`（Apache 头原样保留），删掉官方那套前端工具 `request_approval` + interrupt/resume（§4 选 D 的理由不变），换成我们自己的确认卡片走 `GET /api/confirm/stream`；页面加载先拉 `GET /api/confirm/pending` 补"比页面早出现的待确认项"。`AgentConfig` 不再暴露 `ReActAgent` 单例 bean，改注册 factory —— 于是 §8 从"自存"翻成"用框架"（推导与实测见 §8）。浏览器验到的是：工具事件流、确认卡片里可编辑的 SQL、同意→61、拒绝→模型明说没拿到数、人改 `>3`→`>5`→执行返回 8（同时暴露"答复抄回原 SQL"的缺陷，见 §4）、追问指代继承、`sqlite_master` 的护栏拒绝不出卡片。79 条离线用例全绿（新增 7 条：AG-UI 配置绑定、路由存在、页面可发、pending 端点、`resolveAgent` 同 threadId 同实例/异 threadId 异实例、registry 持有 factory、无共享 `ReActAgent` bean）。**§2 验收项 3（GIF 里"人编辑 SQL 后执行"那一帧）仍未做，README 未写。**
 **每周留一天不发功能**（W1 因 Boot 4 额外吃半天，这条从可选变成必须）。
 
 **版本窗口**：锁 2.0.3；**唯一例外** —— 若 2.0.4 在 W1 结束前**正式打 tag**（不是 README 提到），给半天跑全绿回归后升一次，此后不再升。理由：你需要的那两个修复只在 2.0.4，而 pin SNAPSHOT 期间的任意提交会直接毁掉 §2 的"10 分钟复现"。
