@@ -21,7 +21,7 @@ GIF 里那一帧是本项目最想让人看的画面：确认卡片里人把 `lo
 前置只有 **JDK 21** 和 **Maven 3.9+**。
 
 ```bash
-git clone <this repo> && cd java-agent
+git clone https://github.com/hejian900625/game-nl2sql-agent.git && cd game-nl2sql-agent
 cp .env.example .env        # 填 DEEPSEEK_API_KEY
 mvn spring-boot:run         # 依赖已缓存时，到 Started App 约 10 秒；data/game.db 由 schema+seed 现场生成（实测 262 条语句 / 1.2 秒）
 ```
