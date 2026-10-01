@@ -1,0 +1,21 @@
+name: CI
+
+# PLAN §10：CI 不持任何 API key。这里只跑离线用例（护栏 / 建库 / 确认门 / prompt / 会话隔离 / 判分算术）。
+# 真实评测要打 DeepSeek，在本地跑，结果 JSON 提交进 eval-results/。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  offline-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: mvn test
+        run: mvn -B -ntp test

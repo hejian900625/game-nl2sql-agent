@@ -25,6 +25,14 @@
 4. 护栏链有离线单测且进 CI（不需要 API key）。
 5. License = **Apache-2.0**；中文主 README + 精简英文 README（英文版只保留 quickstart 与评测结果两节，不做全文双语同步）。
 
+> **2026-10-01 W3-c 逐条对表**
+> ① 本机实测：删掉 `data/game.db` 后 `mvn -B spring-boot:run` → `[db] 已生成 …（262 条语句，1247 ms）` → `Started App in 2.192 seconds` → `GET / 200`、`GET /api/confirm/pending → []`。**8080 被本机一个无关进程占着**（pid 5028，不动它），所以这次是在 18086 上验的，README 里给了换端口的写法。
+> ② 准确率表在两份 README 里，含严格/宽松两个口径与四类失败计数。
+> ③ `docs/demo.gif` 由 `tools/record_demo.py` 生成：Playwright 驱动**系统里已有的 Edge**（`channel=msedge`，headless，不下载浏览器），四帧真截图（提问 → 确认卡片 → **人把 `> 3` 改成 `> 5`** → 答复抄执行侧那条），Pillow 拼 GIF，226 KB。**不是画出来的示意图。**
+> ④ 83 条用例（82 条纯离线 + 1 条需 key 的探活自动 skip）。`.github/workflows/ci.yml` **写了但从未被 GitHub 执行过**（仓库还没推远端，本机也没有 remote）——这条在 README 的"已知问题"里照直写着，不许说成"CI 已绿"。
+> ⑤ `LICENSE`（apache.org 原文拉取，202 行）+ `README.md`（中文主）+ `README.en.md`（只 quickstart 与结果两节）。
+> **仍未达成的一条**：①证明的是"零手工建库"，不是"陌生人 clone 后 10 分钟跑通"——后者要找真人测，目前只有我这台机器的时间线（首次在线拉依赖另计）。README 没承诺陌生人体感，别在别处替它承诺。
+
 ## 3. 技术基线（已核实，别凭印象改）
 
 | 项 | 值 | 说明 |
@@ -240,6 +248,10 @@ D:/tools/apache-maven-3.9.16/bin/mvn -o -B spring-boot:run \
 
 ```
 pom.xml
+LICENSE            ← Apache-2.0 原文（apache.org 拉取）
+README.md / README.en.md   ← 中文主文档 + 精简英文（§2 第 5 条：英文只留 quickstart 与结果，不做双语同步）
+docs/demo.gif      ← 由 tools/record_demo.py 真截图生成，进仓库（README 首屏）
+.github/workflows/ci.yml   ← 只跑离线用例、不注入 key（写了还没被 GitHub 执行过，见 §2 对表）
 src/main/java/...
   ├─ agent/ModelConfig       ← 启动 fail-fast：model 名非空且 != gpt-4.1-mini 且 key 非空，任一不满足则 Model bean 建立失败、进程拒绝启动。**联网探活不在启动路径里**（否则 §10 的 CI 不持 key 与 @SpringBootTest 一起破），由 `DeepSeekModelSmokeTest` 承担
   ├─ agent/                  ← AG-UI 注册 factory（AgentConfig）、每题现造的 AgentFactory、系统 prompt（SystemPrompt，运行时拼 schema）
@@ -257,7 +269,8 @@ src/main/resources/
 tools/
   ├─ SeedGen.java       ← 固定 seed 造 seed_data.sql（纯 JDK，`java tools/SeedGen.java`）
   ├─ verify_eval.py     ← build/check：把 25 题的 truthSql 全跑一遍生成期望值，禁止手打数字
-  └─ edit_echo_check.py ← 手动复验"人编辑 SQL 后答复抄执行的那条"（§4）：起 human 模式的服务再跑，要打真 key，所以不进 CI
+  ├─ edit_echo_check.py ← 手动复验"人编辑 SQL 后答复抄执行的那条"（§4）：起 human 模式的服务再跑，要打真 key，所以不进 CI
+  └─ record_demo.py     ← 录 docs/demo.gif：Playwright 驱动系统里的 Edge（channel=msedge，headless，不下载浏览器）截四帧，Pillow 拼
 ```
 
 - `.gitignore`：`.env`、`*.db`、`*-wal`/`*-shm`、`target/`、IDE 目录。评测结果 JSON **不 ignore**。
@@ -297,6 +310,7 @@ tools/
 > **进度（2026-10-01 W3-0）**：✅ 本地仓库补全。离线构建此前炸在 `PluginResolutionException`，**根因不是 jar 没下过**：`~/.m2` 里的 plugin pom 打着旧仓库 id `aliyunmaven`，而 settings.xml 的 mirror id 是 `aliyun-public`，离线模式就不敢信本地已有文件；联网跑一遍重新盖章即解决。同时把 `agentscope-agui-spring-boot-starter` / `agentscope-extensions-agui` 2.0.3 及它们在 Boot 4.0.4 版本管理下的完整传递闭包灌进本地仓库（做法：仓库外放一个与本项目 pom 同构 + 这两个依赖的探针 pom，`mvn dependency:go-offline`，验完删）。验证：`mvn -o -B clean test` 72 绿、`mvn -o -B clean package` 含 `spring-boot:repackage` 成功。
 > **进度（2026-10-01 W3-a）**：✅ AG-UI 页面接线并在浏览器里真跑通（端口 18081、真 key、`human` 确认模式）。抄官方 `examples/agui` 的 `index.html` + `js/agui-client.js`（Apache 头原样保留），删掉官方那套前端工具 `request_approval` + interrupt/resume（§4 选 D 的理由不变），换成我们自己的确认卡片走 `GET /api/confirm/stream`；页面加载先拉 `GET /api/confirm/pending` 补"比页面早出现的待确认项"。`AgentConfig` 不再暴露 `ReActAgent` 单例 bean，改注册 factory —— 于是 §8 从"自存"翻成"用框架"（推导与实测见 §8）。浏览器验到的是：工具事件流、确认卡片里可编辑的 SQL、同意→61、拒绝→模型明说没拿到数、人改 `>3`→`>5`→执行返回 8（同时暴露"答复抄回原 SQL"的缺陷，见 §4）、追问指代继承、`sqlite_master` 的护栏拒绝不出卡片。79 条离线用例全绿（新增 7 条：AG-UI 配置绑定、路由存在、页面可发、pending 端点、`resolveAgent` 同 threadId 同实例/异 threadId 异实例、registry 持有 factory、无共享 `ReActAgent` bean）。**§2 验收项 3（GIF 里"人编辑 SQL 后执行"那一帧）仍未做，README 未写。**
 > **进度（2026-10-01 W3-b）**：✅ "人改过 SQL、答复抄原文"缺陷修掉了，走的是 prompt 硬规则（§4 末有修复实测）。同轮**顺带修了评分器第三个 bug**（宽松口径分母被 subset 顶掉，见 §7）—— 它不影响 88%/92% 那三行的结论，但影响任何要进 README 的第二个数字。第四轮 `--eval`（新 prompt）严格 84% / 宽松 88%，翻脸集合 A03↓ B04↑，按 §7 纪律不作为变差的证据。83 条离线用例全绿（新增 4 条：prompt 复述规则锚点 1 条 + `EvalCommandSummaryTest` 3 条），1 条 skip = 无 key 的 smoke。W2/W3 剩余：GIF、中英 README、#3096 的 throwaway 实验、§13 你那三票（B07 在排队）。
+> **进度（2026-10-01 W3-c）**：✅ §2 五条验收**逐条对表完成**（对表结果与两条诚实缺口写在 §2 末）。产出：`docs/demo.gif`（真截图四帧，含"人改 `> 3` → `> 5`"那一帧，由 `tools/record_demo.py` 生成）、`README.md`（中文主）+ `README.en.md`（只 quickstart 与结果两节）、`LICENSE`（Apache-2.0 原文）、`.github/workflows/ci.yml`（**从未被 GitHub 执行过**，仓库无 remote）。清掉了本机一份陈旧的 `data/game.db`（9-30 生成的，已被 gitignore）来实测"删库→重建→起服务→`GET / 200`"，实测数字进 §2 对表。W3 剩余：模型 ID 那条 issue、#3096 实验、README 的 GIF 若你要换真人录屏。
 **每周留一天不发功能**（W1 因 Boot 4 额外吃半天，这条从可选变成必须）。
 
 **版本窗口**：锁 2.0.3；**唯一例外** —— 若 2.0.4 在 W1 结束前**正式打 tag**（不是 README 提到），给半天跑全绿回归后升一次，此后不再升。理由：你需要的那两个修复只在 2.0.4，而 pin SNAPSHOT 期间的任意提交会直接毁掉 §2 的"10 分钟复现"。
