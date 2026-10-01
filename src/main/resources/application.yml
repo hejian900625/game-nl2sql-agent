@@ -11,6 +11,17 @@ agentscope:
     # §4：prompt 要由 schema 在运行时拼，yml 的静态 sys-prompt 只能是占位 → agent/toolkit 两个 bean 改由
     # agent/AgentConfig + agent/ToolkitConfig 自建（starter 那两个都是 @ConditionalOnMissingBean）。
     enabled: false
+  agui:
+    # §8（2026-10-01 改）：会话状态交给框架。server-side-memory=true 时 DefaultAgentResolver 走
+    # ThreadSessionManager.getOrCreateAgent(threadId, ...)，按 threadId 复用 AgentConfig 注册的那个 factory
+    # 造出来的实例 → 多轮指代继承可用，且不同浏览器互不污染。关掉它每个请求都是全新实例，第二轮就失忆。
+    server-side-memory: true
+    default-agent-id: default
+    path-prefix: /agui
+    # 页面要把模型真实写出来的 SQL 摆给人看，确认门才有意义
+    emit-tool-call-args: true
+    # DeepSeek 的 thinking 是关的（game.model.enable-thinking），开着只会白配一套 REASONING_* 事件
+    enable-reasoning: false
 
 game:
   agent:

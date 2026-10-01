@@ -41,6 +41,17 @@
       <artifactId>agentscope-openai-spring-boot-starter</artifactId>
       <version>${agentscope.version}</version>
     </dependency>
+    <!-- AG-UI：starter 里 extensions-agui 是 provided+optional（实测其 pom），不传递，两个都得显式声明 -->
+    <dependency>
+      <groupId>io.agentscope</groupId>
+      <artifactId>agentscope-agui-spring-boot-starter</artifactId>
+      <version>${agentscope.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.agentscope</groupId>
+      <artifactId>agentscope-extensions-agui</artifactId>
+      <version>${agentscope.version}</version>
+    </dependency>
 
     <dependency>
       <groupId>com.github.jsqlparser</groupId>

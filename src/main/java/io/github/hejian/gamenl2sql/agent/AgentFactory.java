@@ -16,6 +16,9 @@ import org.springframework.stereotype.Component;
  * 看见上一题的 SQL 和数字，那个准确率就是假的。所以每道题要 new 一个。
  *
  * <p>prompt 里的 schema 只在启动时算一次：库内容在一次进程里不变，重算 25 次只是白付开销。
+ *
+ * <p>AG-UI 那条路也走这里：{@code AgentConfig} 把 {@code create()} 注册成 factory，框架按
+ * threadId 各造一个实例（§8）。所以"每道题一个实例"和"每个会话一个实例"是同一个方法的两次用途。
  */
 @Component
 @EnableConfigurationProperties(GameAgentProperties.class)
