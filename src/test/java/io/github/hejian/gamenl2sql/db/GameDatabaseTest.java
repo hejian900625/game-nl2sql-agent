@@ -47,6 +47,23 @@ class GameDatabaseTest {
         assertThat(ddl).contains("退款单不减").contains("0=非会员（不是NULL）");
     }
 
+    /**
+     * 表级注释（写在 CREATE TABLE 之前那种）不进 sqlite_master —— 所以"本表没有 is_del"这句话
+     * 必须由 prompt 正文承担。这条断言钉住的是"prompt 为什么需要那段硬规则"的依据。
+     */
+    @Test
+    void tableLevelCommentsAreNotStoredAndThereforeMustLiveInThePrompt() {
+        String ddl = database.schemaDdl(io.github.hejian.gamenl2sql.guard.SqlGuard.ALLOWED_TABLES);
+        assertThat(ddl)
+                .doesNotContain("日粒度活跃日志")
+                .doesNotContain("道具变更流水")
+                .doesNotContain("这两个日期列的命名风格");
+        // 但同一条信息在列注释里也有一份的，才真的进得了 prompt
+        assertThat(io.github.hejian.gamenl2sql.agent.SystemPrompt
+                .render(ddl, java.time.LocalDate.parse("2026-01-31"), 4))
+                .contains("login_log 和 item_flow 没有 is_del");
+    }
+
     @Test
     void reproducesEveryEvalExpectation() throws Exception {
         ObjectMapper mapper = new ObjectMapper();

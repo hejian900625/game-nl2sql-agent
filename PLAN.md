@@ -101,7 +101,7 @@ org.xerial:sqlite-jdbc                                    ← 必须够新，窗
 
 **schema 注入已落地（2026-09-30 W2-a，`agent/SystemPrompt` + `agent/AgentConfig`）**
 
-prompt 由"运行时的库"拼出来，不是抄一份 `schema.sql`：`GameDatabase.schemaDdl()` 从 `sqlite_master` 取建表语句，实测 SQLite **把 `--` 列注释原样存着**（`CREATE TABLE ...` 里那 3081 字符就是全库口径线索），所以"库里真正生效的定义"与"prompt 里的定义"不可能各说一套。表级注释（`CREATE TABLE` 之前的那行说明）**不会**进 `sqlite_master` —— 所以"本表没有 is_del"这类话必须由 prompt 正文承担，这条已经在 `SystemPrompt` 的硬规则里。实测规模：**整份 prompt 4027 字符 / 其中 schema 3081**（`AgentConfig` 启动日志会打这两个数，§7 的成本账以此为基准）。
+prompt 由"运行时的库"拼出来，不是抄一份 `schema.sql`：`GameDatabase.schemaDdl()` 从 `sqlite_master` 取建表语句，实测 SQLite **把 `--` 列注释原样存着**（`CREATE TABLE ...` 里那 3081 字符就是全库口径线索），所以"库里真正生效的定义"与"prompt 里的定义"不可能各说一套。表级注释（`CREATE TABLE` 之前的那行说明）**不会**进 `sqlite_master` —— 所以"本表没有 is_del"这类话必须由 prompt 正文承担，这条已经在 `SystemPrompt` 的硬规则里。**正反两半都由测试钉住，别信这份文档的措辞：`GameDatabaseTest.schemaDdlCarriesTheColumnCommentsThatEncodeCalibers`（列注释在）与 `tableLevelCommentsAreNotStoredAndThereforeMustLiveInThePrompt`（表级注释不在）。**实测规模：**整份 prompt 4027 字符 / 其中 schema 3081**（`AgentConfig` 启动日志会打这两个数，§7 的成本账以此为基准）。
 
 三条只有读字节码才发现的框架事实，都影响后面的实现：
 - ⚠️ **`ReActAgent.Builder.build()` 会 `toolkit.copy()`** —— agent 用的是副本，不是 Spring 那个 bean 本体。所以"agent 建好之后再往 bean 注册工具"模型永远看不见；要加工具必须在 `ToolkitConfig` 里加。副本实测只含 `run_sql`（`registerMetaTool()` 没塞进东西）。
