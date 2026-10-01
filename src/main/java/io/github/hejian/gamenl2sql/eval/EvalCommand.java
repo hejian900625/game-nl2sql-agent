@@ -101,15 +101,15 @@ public class EvalCommand implements ApplicationRunner {
         return doc;
     }
 
-    private static Map<String, Object> summary(List<Result> results) {
+    // 包可见：那几个口径的算法要有离线断言（EvalCommandSummaryTest），不能只在真跑一轮 25 题时肉眼看。
+    static Map<String, Object> summary(List<Result> results) {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("total", results.size());
         map.put("byVerdict", countBy(results, r -> r.verdict().name()));
         map.put("accuracy", percent(results, r -> true));
         // 宽松口径：表格里没有、但答复文本给出了期望值也算对。留存率这类题模型分两步查、最后用文字做除法，
         // 商永远不在单元格里（B05 两轮都是这种），拿严格口径判它等于用评分器格式判模型错。
-        map.put("accuracyCountingAnswerText",
-                percent(results, r -> r.verdict() == Verdict.CORRECT || r.expectedInAnswer()));
+        map.put("accuracyCountingAnswerText", lenientPercent(results));
         map.put("accuracyExcludingRetention", percent(results, r -> !r.retention()));
         map.put("accuracyRetention", percent(results, r -> r.retention()));
         map.put("accuracySingleTurn", percent(results, r -> r.turns().size() == 1));
@@ -136,6 +136,19 @@ public class EvalCommand implements ApplicationRunner {
         }
         long correct = in.stream().filter(r -> r.verdict() == Verdict.CORRECT).count();
         return String.format(java.util.Locale.ROOT, "%.1f%% (%d/%d)", 100.0 * correct / in.size(), correct, in.size());
+    }
+
+    /**
+     * 宽松口径：分子 = 严格命中 ∪ 期望值出现在答复文字里，分母仍是全部题目。
+     * 不能写成 {@code percent(results, 严格命中 ∪ 文字命中)} —— 那样 subset 同时当了分母，
+     * 把"靠文字救回来"的那几题从分母里除掉，21/25 的轮次会被报成 95.5% (21/22)。实测踩过。
+     */
+    private static String lenientPercent(List<Result> results) {
+        long ok = results.stream()
+                .filter(r -> r.verdict() == Verdict.CORRECT || r.expectedInAnswer())
+                .count();
+        return String.format(java.util.Locale.ROOT, "%.1f%% (%d/%d)",
+                100.0 * ok / results.size(), ok, results.size());
     }
 
     private static String summaryLine(List<Result> results) {

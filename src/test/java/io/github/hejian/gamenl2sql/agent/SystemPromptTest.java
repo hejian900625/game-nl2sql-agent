@@ -44,4 +44,11 @@ class SystemPromptTest {
         // §4 的失败归因里"护栏拒绝 / 人拒绝"要能被模型如实转述，而不是编个数
         assertThat(prompt).contains("不许换个说法把数字猜出来");
     }
+
+    @Test
+    void answersMustQuoteTheSqlThatActuallyRan() {
+        // 实测缺陷：人编辑过 SQL 后，工具返回的是改写并护栏重写的那条，模型答复里却抄自己原来那条。
+        // prompt 只能要求"逐字复制工具返回的执行 SQL 行"，这里是这条要求的锚点断言。
+        assertThat(prompt).contains("逐字复制").contains("执行 SQL:");
+    }
 }
