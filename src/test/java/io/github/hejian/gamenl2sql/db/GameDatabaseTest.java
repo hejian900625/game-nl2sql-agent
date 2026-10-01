@@ -37,6 +37,17 @@ class GameDatabaseTest {
     }
 
     @Test
+    void schemaDdlCarriesTheColumnCommentsThatEncodeCalibers() {
+        String ddl = database.schemaDdl(io.github.hejian.gamenl2sql.guard.SqlGuard.ALLOWED_TABLES);
+        assertThat(ddl).contains("CREATE TABLE acct").contains("CREATE TABLE pay_ord")
+                .contains("CREATE TABLE login_log").contains("CREATE TABLE item_flow")
+                .contains("CREATE TABLE goods").contains("CREATE TABLE role")
+                .contains("CREATE TABLE season").contains("CREATE TABLE srv");
+        // 列注释是模型唯一的口径线索来源，SQLite 把它们原样存在 sqlite_master.sql 里
+        assertThat(ddl).contains("退款单不减").contains("0=非会员（不是NULL）");
+    }
+
+    @Test
     void reproducesEveryEvalExpectation() throws Exception {
         ObjectMapper mapper = new ObjectMapper();
         int checked = 0;

@@ -7,7 +7,8 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
 
-import java.io.IOException;import java.io.UncheckedIOException;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,6 +19,7 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -148,6 +150,32 @@ public class GameDatabase {
                 return new QueryResult(names, rows);
             }
         }
+    }
+
+    /**
+     * 给 prompt 用的建表语句，原样取自 {@code sqlite_master}。
+     *
+     * <p>为什么绕这一趟而不是直接发 {@code schema.sql}：SQLite 会把 {@code --} 列注释一起存进
+     * {@code sqlite_master.sql}（实测），所以"库里真正生效的那份定义"就是自带中文口径注释的那份 ——
+     * 复述文件反而多出一条可以让 prompt 与库不一致的旁路。表名在 Java 侧筛，不拼进 SQL。
+     */
+    public String schemaDdl(Collection<String> allowed) {
+        QueryResult tables;
+        try {
+            tables = query("select name, sql from sqlite_master where type='table' order by name");
+        } catch (SQLException e) {
+            throw new IllegalStateException("读不到表结构：" + e.getMessage(), e);
+        }
+        StringBuilder ddl = new StringBuilder();
+        for (List<Object> row : tables.rows()) {
+            if (allowed.contains(String.valueOf(row.get(0)))) {
+                ddl.append(row.get(1)).append(";\n");
+            }
+        }
+        if (ddl.isEmpty()) {
+            throw new IllegalStateException("库里找不到要注入的表 " + allowed + "，prompt 会变成空 schema");
+        }
+        return ddl.toString().stripTrailing();
     }
 
     public Path file() {

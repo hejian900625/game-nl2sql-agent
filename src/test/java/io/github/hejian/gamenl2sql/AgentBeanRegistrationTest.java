@@ -1,7 +1,7 @@
 package io.github.hejian.gamenl2sql;
 
 import io.agentscope.core.ReActAgent;
-import io.agentscope.core.memory.InMemoryMemory;
+import io.agentscope.core.memory.Memory;
 import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.message.ToolResultBlock;
 import io.agentscope.core.message.ToolUseBlock;
@@ -40,17 +40,30 @@ class AgentBeanRegistrationTest {
         Model model = context.getBean(Model.class);
         assertThat(model.getModelName()).isEqualTo("deepseek-flash");
         assertThat(model.supportsNativeStructuredOutput()).isFalse();
-        assertThat(context.getBean(ReActAgent.class)).isNotNull();
-        assertThat(context.getBean(InMemoryMemory.class)).isNotNull();
 
         Toolkit toolkit = context.getBean(Toolkit.class);
         assertThat(toolkit.getToolNames()).containsExactly("run_sql");
 
         ReActAgent agent = context.getBean(ReActAgent.class);
+        // starter 那条 agent bean 已被 agentscope.agent.enabled=false 关掉，所以这里必须是我们自建的那份
+        // build() 里对 Toolkit 做了 copy()，所以 agent 用的是副本不是 bean 本体 ——
+        // 后果：agent 建好之后再往 bean 上 registerTool 模型永远看不到。实测副本里只有 run_sql（没混进 meta 工具）
+        assertThat(agent.getToolkit()).isNotSameAs(toolkit);
+        assertThat(agent.getToolkit().getToolNames()).containsExactly("run_sql");
+        assertThat(agent.getModel()).isSameAs(model);
+        assertThat(agent.getMaxIters()).isEqualTo(4);
+        assertThat(agent.getSysPrompt())
+                .contains("CREATE TABLE pay_ord")
+                .contains("今天 = 2026-01-31")
+                .doesNotContain("占位");
+        // 2.0.3 的 ReActAgent 没有 memory 入口，starter 的 Memory bean 只是没被用到的历史遗留
+        assertThat(context.getBeanNamesForType(Memory.class)).isEmpty();
+
         System.out.println("[gate4] Model      = " + model.getClass().getName()
                 + " id=" + context.getBeanNamesForType(Model.class)[0]);
         System.out.println("[gate4] ReActAgent = " + agent.getClass().getName()
-                + " id=" + context.getBeanNamesForType(ReActAgent.class)[0]);
+                + " id=" + context.getBeanNamesForType(ReActAgent.class)[0]
+                + " prompt长度=" + agent.getSysPrompt().length());
     }
 
     @Test

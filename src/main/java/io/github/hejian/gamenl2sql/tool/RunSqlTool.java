@@ -38,11 +38,8 @@ public class RunSqlTool {
 
     @Tool(name = "run_sql",
             description = """
-                    执行一条只读 SELECT，返回表格。一次调用只允许一条语句。
-                    只能用这些表：srv, acct, role, goods, pay_ord, login_log, item_flow, season。
-                    算净付费必须同时满足 ord_st=1 且 is_del=0（退款单的 pay_amt 仍是正数，靠 ord_st=2 区分）。
-                    pay_ord / login_log 有 is_del，但 login_log 和 item_flow 没有 is_del 这一列，别加这个条件。
-                    时间列有两种格式：reg_time / create_time / pay_time 带时分秒，日期列是 YYYY-MM-DD。
+                    执行一条只读 SELECT，返回表格。一次调用只允许一条语句，只能是 SELECT。
+                    可用表、列定义与口径规则见系统提示里的 DDL（列注释即权威口径来源）。
                     """,
             readOnly = true,
             converter = PlainTextResultConverter.class)

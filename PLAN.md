@@ -99,6 +99,16 @@ org.xerial:sqlite-jdbc                                    ← 必须够新，窗
 - **超时=拒绝**，`doFinally` 清理挂起条目，事后 `decide()` 返回 false（前端拿到 410）；同一条决策点两次，第二次也 false。
 - **`game.confirm.mode=auto_approve` 是 §7 评测的接缝**：25 道题不可能每题手点一次，`--eval` 必须能整条链路跑完而无人值守；`ConfirmationGate` 在该模式下不入 pending 表，`AgentBeanRegistrationTest` 用默认 `human` 模式验挂起，`RunSqlToolTest` 两种模式都验。
 
+**schema 注入已落地（2026-09-30 W2-a，`agent/SystemPrompt` + `agent/AgentConfig`）**
+
+prompt 由"运行时的库"拼出来，不是抄一份 `schema.sql`：`GameDatabase.schemaDdl()` 从 `sqlite_master` 取建表语句，实测 SQLite **把 `--` 列注释原样存着**（`CREATE TABLE ...` 里那 3081 字符就是全库口径线索），所以"库里真正生效的定义"与"prompt 里的定义"不可能各说一套。表级注释（`CREATE TABLE` 之前的那行说明）**不会**进 `sqlite_master` —— 所以"本表没有 is_del"这类话必须由 prompt 正文承担，这条已经在 `SystemPrompt` 的硬规则里。实测规模：**整份 prompt 4027 字符 / 其中 schema 3081**（`AgentConfig` 启动日志会打这两个数，§7 的成本账以此为基准）。
+
+三条只有读字节码才发现的框架事实，都影响后面的实现：
+- ⚠️ **`ReActAgent.Builder.build()` 会 `toolkit.copy()`** —— agent 用的是副本，不是 Spring 那个 bean 本体。所以"agent 建好之后再往 bean 注册工具"模型永远看不见；要加工具必须在 `ToolkitConfig` 里加。副本实测只含 `run_sql`（`registerMetaTool()` 没塞进东西）。
+- ⚠️ **2.0.3 的 `ReActAgent` 没有任何 memory 入口**：builder 无 `memory(...)`，整个类不引用 `io.agentscope.core.memory.*`，连 starter 的 `agentscopeReActAgent(Model, Memory, Toolkit, props)` 里那个 `Memory` 参数都没被方法体用到 —— starter 建的 `InMemoryMemory` bean 是 1.x 遗留的死重量。**这等于替 §8 做了决定**：自存 `{lastQuestion,lastSql,口径}` 不是"绕开框架更可控"，而是框架根本没给。
+- **`agentscope.agent.enabled` 现在必须是 `false`**：agent 与 toolkit 两个 bean 都由我们自建（`@ConditionalOnMissingBean` 会让位），把 starter 那份 `sys-prompt` 留在 yml 里只会误导。`game.agent.{name,max-iters,today}` 是我们的那份配置，`max-iters` 同时进 builder 和 prompt 正文（两处不许漂移），`today` 绑成 `LocalDate` —— 格式写错就让启动失败，而不是让 25 道相对时间题一起静默漂移。
+- 随之做的一个**派生决定（可推翻）**：`run_sql` 的 `@Tool description` 里原本抄了一遍口径（净付费、哪些表没 is_del、两种日期格式），现在删成只剩"单条 SELECT + 权威见 DDL"。**理由**：同一规则两处可写就会两处漂移，且漂移时无法归因（是 prompt 没用还是工具说明没用）；代价是第一次评测可能因为"规则只在 prompt 里"而变差 —— 那正是我们想要的信号，别提前用重复去掩盖。
+
 ## 5. 数据层
 
 - **自造游戏域 6–8 张表**，不用 Sakila/Chinook/Northwind：公开样例库的 schema 太出名，模型是在背答案而不是读 DDL，评测分会虚高。
@@ -165,6 +175,8 @@ org.xerial:sqlite-jdbc                                    ← 必须够新，窗
 
 理由：框架那个选项给你的是**全量消息历史**，而你要的是"只保留上一轮 SQL"——不是同一个东西。用框架实现你的目标，等于悄悄把会话形态换成被你否掉的长历史，代价是 token 上涨、指代歧义变多、**且那 5 道追问题的成绩会受历史长度干扰而不可比**。另外 #3291（builder 权限规则被快照进持久化 session）也让你不想把状态交给框架。
 
+> **2026-09-30 W2-a 实测把这条从"选择"变成"唯一出路"**：2.0.3 的 `ReActAgent` 根本不引用 `io.agentscope.core.memory.*`，`server-side-memory` 那条路对应的是 `AgentStateStore`/`AgentState`（全量状态），没有"给我装一个 Memory"的入口。详见 §4 末实测清单。
+
 ## 9. 工程结构
 
 单模块 Maven（多模块解决的是"多个发布单元/依赖隔离"，你一个都不沾，代价是每次改包结构动 pom）。
@@ -173,7 +185,7 @@ org.xerial:sqlite-jdbc                                    ← 必须够新，窗
 pom.xml
 src/main/java/...
   ├─ agent/ModelConfig       ← 启动 fail-fast：model 名非空且 != gpt-4.1-mini 且 key 非空，任一不满足则 Model bean 建立失败、进程拒绝启动。**联网探活不在启动路径里**（否则 §10 的 CI 不持 key 与 @SpringBootTest 一起破），由 `DeepSeekModelSmokeTest` 承担
-  ├─ agent/                  ← ReActAgent bean、system prompt、schema 注入
+  ├─ agent/                  ← ReActAgent bean（AgentConfig）、系统 prompt（SystemPrompt，运行时拼 schema）
   ├─ tool/                   ← run_sql
   ├─ guard/                  ← 护栏四步链（纯函数，可离线测）
   ├─ hitl/                   ← 确认门状态机 + Sinks + 超时
@@ -217,6 +229,7 @@ src/main/resources/
 > **W1 剩余**：无 —— 四段全部完成（骨架 / W1-a 模型 / W1-b fail-fast / W1-c 护栏+db+工具+确认门）。下一步是 §10 W2 的 `--eval` 与 prompt 的 schema 注入。
 > ✅ **W1-c 后半：`db/` 落地**（`GameDatabase` + `SqlScript` + `DbProperties`，12 条离线用例）。整库 1MB seed 走 JDBC 会 `SQLITE_TOOBIG`，因此有了切分器；建库后强制验 8 张表，因为 SQLite 对错误路径会静默建空库。**最有价值的一条**：`GameDatabaseTest` 把 25 道题的 `truthSql` 全跑了一遍并逐条对上 `expect.value` —— 从此 §2 的"clone 下来 10 分钟能跑通"不依赖 sqlite3 CLI 也不依赖 Python，CI 就能证。细节见 §5 末实测清单。
 **W2**：`--eval` + 25 题 → 第一个真实准确率 → AG-UI 页面抄改 → 追问 5 题的状态传递 → **半天 throwaway 实验**：单独测框架原生 permission+resume，确认 #3096 到底在哪一层复现，**结论作为 issue 提给上游**。
+> **进度（2026-09-30 W2-a）**：✅ 带 schema 注入的正式 prompt 与自建 `ReActAgent` bean 完成（细节见 §4 末）。61 条用例全绿（1 skip = 无 key 的 smoke）。W2 剩余：`--eval` 跑手 + 结果 JSON、AG-UI 页面、追问 5 题的状态传递、#3096 的 throwaway 实验。
 **W3**：README（中英）+ GIF + 准确率表 → 模型 ID 那条 issue → 收尾。
 **每周留一天不发功能**（W1 因 Boot 4 额外吃半天，这条从可选变成必须）。
 

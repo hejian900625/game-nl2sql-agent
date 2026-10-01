@@ -8,13 +8,17 @@ agentscope:
     # 它给的默认 model-name 是 gpt-4.1-mini，开着会静默打到 OpenAI 而不是 DeepSeek。
     enabled: false
   agent:
-    # @ConditionalOnProperty 无 matchIfMissing，漏写则 agent bean 静默不存在
-    enabled: true
-    name: game-nl2sql
-    max-iters: 4
-    sys-prompt: 你是游戏运营数据查询助手。占位 prompt，W1 替换为带 schema 注入的正式版。
+    # §4：prompt 要由 schema 在运行时拼，yml 的静态 sys-prompt 只能是占位 → agent/toolkit 两个 bean 改由
+    # agent/AgentConfig + agent/ToolkitConfig 自建（starter 那两个都是 @ConditionalOnMissingBean）。
+    enabled: false
 
 game:
+  agent:
+    name: game-nl2sql
+    # §4 校准值：3 条 SQL + 1 次校验。这个数同时会被写进系统 prompt，不许两处漂移
+    max-iters: 4
+    # 库内"今天"，数据覆盖 2025-11-01 ~ 这天（§5）。相对时间题全部锚在这里，改它就改了整套期望值
+    today: 2026-01-31
   db:
     # 仓库里不带 .db；文件不存在时由 classpath 的 schema+seed 现场生成（§5）
     path: data/game.db
